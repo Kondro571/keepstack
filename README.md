@@ -10,7 +10,7 @@
 ![Runtime deps](https://img.shields.io/badge/runtime%20deps-4-green)
 ![Status](https://img.shields.io/badge/status-v0.1.0-blueviolet)
 
-![Keepstack demo](docs/screenshots/demo.gif)
+![A short screen recording of Keepstack ingesting assets and running a semantic search.](docs/screenshots/demo.gif)
 
 </div>
 
@@ -25,12 +25,12 @@ install that takes one command.
 
 Pick your path. You do not need to read everything.
 
-- **I want to run it** → the [60-second quickstart](#quickstart) below.
-- **I want the reasoning** → [DESIGN.md](DESIGN.md): the market, the gap,
+- **I want to run it.** Jump to the [Quickstart](#quickstart) below.
+- **I want the reasoning.** [DESIGN.md](DESIGN.md) covers the market, the gap,
   and the decisions behind Keepstack.
-- **I want to understand the code** → [ARCHITECTURE.md](ARCHITECTURE.md), with
+- **I want to understand the code.** [ARCHITECTURE.md](ARCHITECTURE.md) has
   diagrams that render right here on GitHub.
-- **I am new to this domain** → the [DAM-101 primer](docs/DAM-101.md).
+- **I am new to this domain.** Start with the [DAM-101 primer](docs/DAM-101.md).
 
 ## The problem, in three sentences
 
@@ -103,7 +103,7 @@ containers? `docker compose up` does the same thing.
 
 | Asset detail | Semantic search | Dashboard |
 |---|---|---|
-| ![Detail](docs/screenshots/04-asset-detail.png) | ![Search](docs/screenshots/03-semantic-search.png) | ![Dashboard](docs/screenshots/05-dashboard.png) |
+| ![The asset detail view showing extracted metadata and Dublin Core fields.](docs/screenshots/04-asset-detail.png) | ![Semantic search results ranked by embedding similarity.](docs/screenshots/03-semantic-search.png) | ![The dashboard with catalog counts and recent activity.](docs/screenshots/05-dashboard.png) |
 
 <details>
 <summary><b>Open standards and endpoints</b></summary>
@@ -179,6 +179,23 @@ python -m pytest -q
 The suite covers the ingest pipeline, content deduplication, full-text and
 semantic search, fixity detection of corruption, and the Dublin Core / OAI-PMH
 output.
+
+## Known rough edges
+
+Keepstack is v0.1.0, and it is specific about the ground it has not taken yet.
+The full graded comparison is in [COMPARISON.md](COMPARISON.md); the short list:
+
+- **The minimal install is heuristic.** Real semantic search, visual "more like
+  this", and auto-tagging need one optional local model: `pip install
+  onnxruntime` then `python -m keepstack reindex` downloads a small on-device
+  CLIP model, no API keys. Until you do that, the zero-config tier falls back to
+  lexical embeddings and colour tags.
+- **Preservation is fixity, not format migration.** SHA-256 fixity verifies
+  integrity and catches corruption, but OAIS-style active format migration is on
+  the [roadmap](ROADMAP.md), not shipped.
+- **No published VPAT and no SSO yet.** Alt-text is a first-class field, but a
+  Section 508 / WCAG conformance report and SAML/OIDC sign-in are planned rather
+  than done.
 
 ## Documentation map
 
