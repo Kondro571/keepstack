@@ -8,7 +8,7 @@ const state = { token: localStorage.getItem("keepstack_token"), user: null,
 async function api(path, opts = {}) {
   const headers = opts.headers || {};
   if (state.token) headers["Authorization"] = "Bearer " + state.token;
-  if (opts.json) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); }
+  if (opts.json) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); opts.method ??= "POST"; }
   const res = await fetch(path, { ...opts, headers });
   if (res.status === 401) { logout(); throw new Error("unauthorised"); }
   if (!res.ok) { const t = await res.text(); throw new Error(t || res.statusText); }
@@ -29,7 +29,7 @@ $("#login-form").addEventListener("submit", async (e) => {
     const r = await api("/api/auth/login", { json: { username: $("#login-user").value, password: $("#login-pass").value } });
     state.token = r.token; localStorage.setItem("keepstack_token", r.token);
     state.user = r.user; enterApp();
-  } catch { $("#login-error").textContent = "Invalid credentials"; $("#login-error").classList.remove("hidden"); }
+  } catch (err) { console.error("Login failed:", err); $("#login-error").textContent = "Invalid credentials"; $("#login-error").classList.remove("hidden"); }
 });
 $("#btn-logout").addEventListener("click", logout);
 function logout() { localStorage.removeItem("keepstack_token"); state.token = null; state.user = null;
@@ -116,9 +116,8 @@ async function openAsset(uuid) {
   ]);
   const a = d.asset;
   const canEdit = ["admin","editor","contributor"].includes(state.user.role);
-  const preview = a.media_type === "image"
-    ? `<img class="detail-preview" src="/api/assets/${uuid}/preview" alt="${esc(a.alt_text||a.title)}">`
-    : `<img class="detail-preview" src="/api/assets/${uuid}/thumb" alt="${esc(a.title)}">`;
+  // /preview falls back to the grid thumbnail for files without a usable rendition
+  const preview = `<img class="detail-preview" src="/api/assets/${uuid}/preview" alt="${esc(a.alt_text||a.title)}">`;
   const dc = a.dublin_core || {};
   $("#drawer-body").innerHTML = `
     ${preview}
@@ -172,7 +171,8 @@ async function openAsset(uuid) {
     });
     $("#tag-add")?.addEventListener("keydown", async (e) => {
       if (e.key === "Enter" && e.target.value.trim()) {
-        await api("/api/assets/"+uuid+"/tags", { json: { name: e.target.value.trim() } });
+        try { await api("/api/assets/"+uuid+"/tags", { json: { name: e.target.value.trim() } }); }
+        catch (err) { console.error("Add tag failed:", err); toast("Could not add tag", "err"); return; }
         openAsset(uuid);
       }
     });
@@ -284,3 +284,5 @@ async function loadAudit() {
   }
   $("#login").classList.remove("hidden");
 })();
+
+
