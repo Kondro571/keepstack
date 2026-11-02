@@ -7,8 +7,13 @@ are produced on demand and cached in the content-addressable thumb store.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import hashlib
 import io
+import mmap
+import re
+import struct
 from pathlib import Path
 from typing import Optional
 
@@ -47,7 +52,93 @@ def _placeholder(media_type: str, label: str) -> bytes:
     return buf.getvalue()
 
 
+# Adobe apps (Illustrator, InDesign, Acrobat) embed a preview in the file
+# itself, either a JPEG in the XMP packet or a TIFF behind a DOS EPS header,
+# so we can show it without a PostScript/PDF renderer.
+_EMBEDDED_PREVIEW_EXT = {"ai", "eps", "indd", "pdf"}
+_XMP_THUMB_RE = re.compile(rb"<xmpGImg:image>\s*([A-Za-z0-9+/=\s&#xA;]+?)\s*</xmpGImg:image>")
+
+
+def _xmp_preview(blob: Path) -> Optional[Image.Image]:
+    with open(blob, "rb") as f, mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
+        m = _XMP_THUMB_RE.search(mm)
+        if not m:
+            return None
+        raw = base64.b64decode(re.sub(rb"&#xA;|\s", b"", m.group(1)))
+    img = Image.open(io.BytesIO(raw))
+    img.load()
+    return img
+
+
+def _palette_alpha_tiff(tiff: bytes) -> Optional[Image.Image]:
+    """Decode the uncompressed palette+alpha TIFF Illustrator writes, which
+    Pillow cannot read (it has no mode for a palette with an extra sample)."""
+    if tiff[:4] != b"II*\x00":
+        return None
+    ifd = struct.unpack_from("<I", tiff, 4)[0]
+    tags = {}
+    for i in range(struct.unpack_from("<H", tiff, ifd)[0]):
+        tag, typ, count, val = struct.unpack_from("<HHII", tiff, ifd + 2 + 12 * i)
+        tags[tag] = val & 0xFFFF if typ == 3 and count == 1 else val
+    # photometric=palette, uncompressed, 8-bit, chunky, single strip
+    if (tags.get(262), tags.get(259, 1), tags.get(258), tags.get(284, 1)) != (3, 1, 8, 1) or 320 not in tags:
+        return None
+    w, h, spp = tags[256], tags[257], tags.get(277, 1)
+    px = tiff[tags[273]:tags[273] + w * h * spp]
+    pal = struct.unpack_from("<768H", tiff, tags[320])
+    img = Image.frombytes("P", (w, h), px[0::spp])
+    img.putpalette([pal[c * 256 + i] >> 8 for i in range(256) for c in range(3)])
+    img = img.convert("RGB")
+    if spp == 2:
+        alpha = Image.frombytes("L", (w, h), px[1::2])
+        img = Image.composite(img, Image.new("RGB", (w, h), "white"), alpha)
+    return img
+
+
+def _eps_tiff_preview(blob: Path) -> Optional[Image.Image]:
+    """TIFF preview from a DOS EPS binary header (also used by many .ai files)."""
+    with open(blob, "rb") as f:
+        header = f.read(28)
+        if len(header) < 28 or header[:4] != b"\xc5\xd0\xd3\xc6":
+            return None
+        offset, length = struct.unpack_from("<II", header, 20)
+        if not length:
+            return None
+        f.seek(offset)
+        tiff = f.read(length)
+    try:
+        img = Image.open(io.BytesIO(tiff))
+        img.load()
+        return img
+    except OSError:
+        return _palette_alpha_tiff(tiff)
+
+
+def _embedded_preview(blob: Path, max_edge: int) -> Optional[bytes]:
+    """Largest preview the file carries itself (EPS TIFF or XMP JPEG)."""
+    candidates = []
+    for extract in (_eps_tiff_preview, _xmp_preview):
+        try:
+            img = extract(blob)
+        except (OSError, ValueError, struct.error, binascii.Error):
+            img = None
+        if img is not None:
+            candidates.append(img)
+    if not candidates:
+        return None
+    img = max(candidates, key=lambda i: i.width * i.height)
+    img = img.convert("RGB") if img.mode not in ("RGB", "L") else img
+    img.thumbnail((max_edge, max_edge), Image.LANCZOS)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=82)
+    return buf.getvalue()
+
+
 def make_thumbnail(blob: Path, media_type: str, ext: str, max_edge: int = THUMB_MAX) -> bytes:
+    if ext.lower() in _EMBEDDED_PREVIEW_EXT:
+        data = _embedded_preview(blob, max_edge)
+        if data:
+            return data
     if media_type == "image":
         try:
             with Image.open(blob) as img:
@@ -74,8 +165,8 @@ def ensure_thumbnail(sha: str, blob_key: str, media_type: str, ext: str) -> str:
 
 
 def rendition(sha: str, blob_key: str, media_type: str, ext: str, max_edge: int) -> Optional[bytes]:
-    """On-the-fly resized rendition (cached). Images only."""
-    if media_type != "image":
+    """On-the-fly resized rendition (cached). Images and embedded previews only."""
+    if media_type != "image" and ext.lower() not in _EMBEDDED_PREVIEW_EXT:
         return None
     key = f"{sha[:2]}/{sha[2:4]}/{sha}_{max_edge}.jpg"
     out = storage.thumb_path(key)

@@ -3,10 +3,13 @@
 These run against a throwaway data directory so they never touch a real
 repository. Run with:  python -m pytest -q
 """
+import base64
 import io
 import json
 import os
+import struct
 import tempfile
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -16,7 +19,8 @@ os.environ["KEEPSTACK_AI_ENABLED"] = "false"
 
 from PIL import Image  # noqa: E402
 
-from keepstack import ai, ingest, ocr, search, standards, storage, thumbnails, vision  # noqa: E402
+from keepstack import (ai, ingest, ocr, search, standards, storage, tagimport,  # noqa: E402
+                       thumbnails, vision)
 from keepstack.auth import (hash_password, make_token, role_at_least,  # noqa: E402
                          verify_password, verify_token)
 from keepstack.db import get_conn, init_db  # noqa: E402
@@ -206,6 +210,48 @@ def test_xmp_fields_seed_catalog_and_search():
     assert any(i["uuid"] == a["uuid"] for i in res["items"])
 
 
+def test_illustrator_file_uses_embedded_xmp_preview():
+    b64 = base64.b64encode(_img_bytes(color=(220, 40, 40), size=(256, 128))).decode()
+    wrapped = "&#xA;".join(b64[i:i + 76] for i in range(0, len(b64), 76))
+    ai_file = (b"%PDF-1.6\n%stuff\n<x:xmpmeta><xmpGImg:image>" + wrapped.encode()
+               + b"</xmpGImg:image></x:xmpmeta>\n%%EOF")
+    a = ingest.ingest_stream(io.BytesIO(ai_file), "logo.ai")
+    with Image.open(storage.thumb_path(a["thumb_key"])) as thumb:
+        assert thumb.size == (256, 128)
+        assert thumb.getpixel((128, 64))[0] > 180
+
+
+def _palette_alpha_tiff(w, h):
+    # Palette index 1 = red, fully opaque left half, transparent right half.
+    pixels = b"".join(bytes([1, 255 if x < w // 2 else 0]) for _ in range(h) for x in range(w))
+    palette = [0] * 768
+    palette[1] = 0xFFFF  # red channel of index 1
+    entries = [(256, 3, 1, w), (257, 3, 1, h), (258, 3, 1, 8), (259, 3, 1, 1),
+               (262, 3, 1, 3), (273, 4, 1, 0), (277, 3, 1, 2), (284, 3, 1, 1),
+               (320, 3, 768, 0), (338, 3, 1, 1)]
+    ifd_size = 2 + 12 * len(entries) + 4
+    pix_off = 8 + ifd_size
+    pal_off = pix_off + len(pixels)
+    ifd = struct.pack("<H", len(entries))
+    for tag, typ, count, val in entries:
+        val = {273: pix_off, 320: pal_off}.get(tag, val)
+        ifd += struct.pack("<HHII", tag, typ, count, val)
+    ifd += b"\0\0\0\0"
+    return b"II*\x00" + struct.pack("<I", 8) + ifd + pixels + struct.pack("<768H", *palette)
+
+
+def test_eps_wrapped_ai_uses_tiff_preview():
+    tiff = _palette_alpha_tiff(300, 200)
+    ps = b"%!PS-Adobe-3.0 EPSF-3.0\n%%Creator: Adobe Illustrator(R) 13.0\n%%EOF\n"
+    header = b"\xc5\xd0\xd3\xc6" + struct.pack("<6I", 30, len(ps), 0, 0, 30 + len(ps), len(tiff)) + b"\xff\xff"
+    a = ingest.ingest_stream(io.BytesIO(header + ps + tiff), "poster.ai")
+    with Image.open(storage.thumb_path(a["thumb_key"])) as thumb:
+        assert thumb.size == (300, 200)
+        r, g, _ = thumb.getpixel((50, 100))
+        assert r > 200 and g < 60          # opaque half is red
+        assert min(thumb.getpixel((250, 100))) > 200  # transparent half is white
+
+
 def test_iiif_info_advertises_level_2():
     info = standards.iiif_info({"uuid": "asset-1", "width": 100, "height": 60})
     assert info["profile"] == "level2"
@@ -369,3 +415,55 @@ def test_version_endpoint_reports_name_and_version():
     payload = version()
     assert payload["name"] == "keepstack"
     assert payload["version"]
+
+
+def _asset_tags(asset_id):
+    return {r["name"] for r in get_conn().execute(
+        "SELECT t.name FROM tags t JOIN asset_tags at ON at.tag_id = t.id WHERE at.asset_id = ?",
+        (asset_id,))}
+
+
+def test_tag_import_csv_semicolon_header_and_cp1250():
+    data = "Nazwa pliku;Tagi\nC:\\Stock\\Brand.AI;wektor, łódź\nmissing.ai;x\n".encode("cp1250")
+    entries = tagimport.parse(data, "tags.csv")
+    assert entries[0] == ("C:\\Stock\\Brand.AI", ["wektor", "łódź"])
+    a = ingest.ingest_stream(io.BytesIO(b"%!PS-Adobe-3.0\n%%EOF\n"), "brand.ai")
+    result = tagimport.apply(entries)
+    assert result["assets_tagged"] == 1 and result["unmatched"] == ["missing.ai"]
+    assert {"wektor", "łódź"} <= _asset_tags(a["id"])
+    assert any(i["uuid"] == a["uuid"] for i in search.search(q="wektor")["items"])
+
+
+def test_tag_import_xml_shapes():
+    xml = b"""<tags>
+      <asset filename="a.ai"><tag>one</tag><keyword>two</keyword></asset>
+      <asset uuid="u-1" tags="three; four"/>
+      <item><file>b.eps</file><tags>five|six</tags></item>
+    </tags>"""
+    assert tagimport.parse(xml, "t.xml") == [
+        ("a.ai", ["one", "two"]), ("u-1", ["three", "four"]), ("b.eps", ["five", "six"])]
+
+
+def test_tag_import_xlsx_shared_and_inline_strings():
+    ns = 'xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"'
+    rel_ns = 'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"'
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("xl/workbook.xml", f'<workbook {ns} {rel_ns}><sheets>'
+                   '<sheet name="Tags" sheetId="1" r:id="rId1"/></sheets></workbook>')
+        z.writestr("xl/_rels/workbook.xml.rels",
+                   '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                   '<Relationship Id="rId1" Target="worksheets/data.xml"/></Relationships>')
+        z.writestr("xl/sharedStrings.xml", f'<sst {ns}><si><t>file</t></si><si><t>logo.ai</t></si>'
+                   '<si><r><t>red</t></r><r><t>dish</t></r></si></sst>')
+        z.writestr("xl/worksheets/data.xml", f'<worksheet {ns}><sheetData>'
+                   '<row r="1"><c r="A1" t="s"><v>0</v></c></row>'
+                   '<row r="2"><c r="A2" t="s"><v>1</v></c><c r="C2" t="s"><v>2</v></c>'
+                   '<c r="D2" t="inlineStr"><is><t>blue; flat</t></is></c></row>'
+                   '</sheetData></worksheet>')
+    assert tagimport.parse(buf.getvalue(), "t.xlsx") == [("logo.ai", ["reddish", "blue", "flat"])]
+
+
+def test_tag_import_rejects_unknown_format():
+    with pytest.raises(ValueError):
+        tagimport.parse(b"x", "tags.json")

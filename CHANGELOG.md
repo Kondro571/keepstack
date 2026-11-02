@@ -8,6 +8,13 @@ semantic versioning.
 
 ### Added
 
+- Bulk tag import from CSV, XLSX, or XML (`POST /api/tags/import`, and an
+  "Import tags" section in the upload dialog). Rows are matched to assets by
+  file name or UUID, which covers formats like Illustrator `.ai` that carry no
+  embedded keywords. See `docs/examples/tag-import.csv`. No new dependencies.
+- Real thumbnails for `.ai`/`.eps`/`.indd`/`.pdf` files from the preview they
+  embed (XMP JPEG or DOS EPS TIFF), instead of a generic placeholder.
+
 - Parse common XMP RDF fields into structured metadata, catalog fields, and
   full-text search.
 - OCR images at ingest through the Tesseract binary when it is installed, so
