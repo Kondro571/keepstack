@@ -139,6 +139,13 @@
       </div>
       <label class="check"><input type="checkbox" id="ai-toggle" checked> Run AI enrichment (tags, alt-text)</label>
       <div id="upload-list" class="upload-list"></div>
+      <div class="tag-import">
+        <h4>Import tags</h4>
+        <p class="muted">CSV, XLSX or XML. First column: file name (e.g. <code>logo.ai</code>) or UUID; next columns: tags. Several tags in one cell can be separated with <code>;</code> or <code>,</code>.</p>
+        <button id="btn-tag-import" class="btn btn-ghost">Choose tag file...</button>
+        <input id="tag-import-input" type="file" accept=".csv,.xlsx,.xml" hidden>
+        <div id="tag-import-result" class="upload-list"></div>
+      </div>
       <div class="modal-actions">
         <button id="upload-cancel" class="btn btn-ghost">Close</button>
       </div>

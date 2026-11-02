@@ -18,7 +18,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, ingest, search, standards, storage, thumbnails
+from . import __version__, ingest, search, standards, storage, tagimport, thumbnails
 from .audit import log, now_iso
 from .auth import (authenticate, hash_password, login_locked, make_token,
                    note_login_failure, note_login_success, role_at_least,
@@ -366,6 +366,20 @@ def list_tags(user: dict = Depends(require_user)):
         "SELECT t.name, COUNT(at.asset_id) c FROM tags t "
         "LEFT JOIN asset_tags at ON at.tag_id = t.id GROUP BY t.name ORDER BY c DESC, t.name").fetchall()
     return {"tags": [dict(r) for r in rows]}
+
+
+@app.post("/api/tags/import")
+async def import_tags(request: Request, file: UploadFile = File(...),
+                      user: dict = Depends(require_role("contributor"))):
+    data = await file.read()
+    try:
+        entries = tagimport.parse(data, file.filename or "")
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read {file.filename}: {exc}")
+    result = tagimport.apply(entries)
+    log("tag.import", user=user, detail=f"{file.filename}: {result['assets_tagged']} assets, "
+        f"{result['tags_added']} tags", ip=client_ip(request))
+    return result
 
 
 # ---------------------------------------------------------------------------

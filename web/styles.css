@@ -195,6 +195,11 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .upload-item { display: flex; justify-content: space-between; padding: var(--s1) var(--s2); background: var(--base-2); border-radius: var(--radius-sm); font-size: 13px; }
 .upload-item.ok { border-left: 3px solid var(--ok); }
 .upload-item.dup { border-left: 3px solid var(--muted); }
+.upload-item.err { border-left: 3px solid var(--danger); }
+.tag-import { display: flex; flex-direction: column; gap: var(--s2); align-items: flex-start; border-top: 1px solid var(--base-3); padding-top: var(--s3); }
+.tag-import h4 { margin: 0; }
+.tag-import p { margin: 0; font-size: 13px; }
+.tag-import .upload-list { align-self: stretch; }
 .modal-actions { display: flex; justify-content: flex-end; gap: var(--s2); }
 
 /* ---------- tables / cards ---------- */
