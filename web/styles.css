@@ -138,6 +138,11 @@ button, input, select { font-family: inherit; font-size: inherit; }
 
 /* ---------- grid ---------- */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s3); }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s1); margin-top: var(--s4); }
+.pager .btn { min-width: 40px; padding: var(--s1) var(--s2); }
+.pager .btn.current { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
+.pager .gap { color: var(--muted); padding: 0 var(--s1); }
+.pager .range { margin-left: var(--s3); font-size: 13px; }
 .card {
   background: var(--base-1); border: 1px solid var(--base-3); border-radius: var(--radius);
   overflow: hidden; cursor: pointer; transition: transform .15s, border-color .15s; display: flex; flex-direction: column;

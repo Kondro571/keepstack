@@ -63,14 +63,27 @@ $("#search-mode").addEventListener("change", (e) => { state.mode = e.target.valu
 $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; loadLibrary(); });
 $("#active-filter").addEventListener("click", () => { state.media = null; state.tag = null; state.collection = null; loadLibrary(); });
 
+const PAGE_SIZE = 60;
+let page = 1, lastFilterKey = "", librarySeq = 0;
+
 async function loadLibrary() {
-  const p = new URLSearchParams({ q: state.q, sort: state.sort, mode: state.mode, limit: "120" });
+  // Any change of search, filter or sort starts again from page 1.
+  const filterKey = JSON.stringify([state.q, state.mode, state.sort, state.media, state.tag, state.collection]);
+  if (filterKey !== lastFilterKey) { page = 1; lastFilterKey = filterKey; }
+  const p = new URLSearchParams({ q: state.q, sort: state.sort, mode: state.mode,
+    limit: String(PAGE_SIZE), offset: String((page - 1) * PAGE_SIZE) });
   if (state.media) p.set("media_type", state.media);
   if (state.tag) p.set("tag", state.tag);
   if (state.collection) p.set("collection_id", state.collection);
+  const seq = ++librarySeq;
   const data = await api("/api/assets?" + p.toString());
+  if (seq !== librarySeq) return;  // a newer request (e.g. further typing) superseded this one
+  if (!data.items.length && page > 1 && data.total) {  // e.g. last item on the last page deleted
+    page = Math.ceil(data.total / PAGE_SIZE); return loadLibrary();
+  }
   renderFacets(data.facets);
   renderGrid(data.items, data.total);
+  renderPager(data.total);
   const filt = state.media || (state.tag ? "#" + state.tag : null) || (state.collection ? "collection" : null);
   $("#active-filter").classList.toggle("hidden", !filt);
   if (filt) $("#active-filter").textContent = filt;
@@ -88,6 +101,32 @@ function renderGrid(items, total) {
       </div>
     </div>`).join("");
   $$("#grid .card").forEach(c => c.addEventListener("click", () => openAsset(c.dataset.uuid)));
+}
+
+function renderPager(total) {
+  const pages = Math.ceil(total / PAGE_SIZE);
+  const pager = $("#pager");
+  pager.classList.toggle("hidden", pages <= 1);
+  if (pages <= 1) { pager.innerHTML = ""; return; }
+  // first, last, and two either side of the current page; gaps become "..."
+  const nums = [...new Set([1, page - 2, page - 1, page, page + 1, page + 2, pages])]
+    .filter(n => n >= 1 && n <= pages).sort((a, b) => a - b);
+  const btn = (n, label, extra = "") =>
+    `<button class="btn btn-ghost ${extra}" data-page="${n}" ${n === page && !label ? 'aria-current="page"' : ""}>${label || n}</button>`;
+  let html = page > 1 ? btn(page - 1, "&lsaquo; Prev") : "";
+  nums.forEach((n, i) => {
+    if (i && n - nums[i - 1] > 1) html += '<span class="gap">...</span>';
+    html += btn(n, "", n === page ? "current" : "");
+  });
+  if (page < pages) html += btn(page + 1, "Next &rsaquo;");
+  const from = (page - 1) * PAGE_SIZE + 1, to = Math.min(page * PAGE_SIZE, total);
+  html += `<span class="range muted">${from.toLocaleString()}-${to.toLocaleString()} of ${total.toLocaleString()}</span>`;
+  pager.innerHTML = html;
+  $$("#pager button").forEach(b => b.addEventListener("click", () => {
+    page = Number(b.dataset.page);
+    $(".content").scrollTo?.({ top: 0 }); window.scrollTo({ top: 0 });
+    loadLibrary();
+  }));
 }
 
 function renderFacets(facets) {

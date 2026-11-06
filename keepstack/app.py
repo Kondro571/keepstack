@@ -282,6 +282,7 @@ def delete_asset(uuid: str, request: Request, user: dict = Depends(require_role(
     with transaction() as conn:
         conn.execute("UPDATE assets SET status = 'deleted', updated_at = ? WHERE id = ?",
                      (now_iso(), a["id"]))
+    search.invalidate_facets()
     log("asset.delete", user=user, target_type="asset", target_id=uuid, ip=client_ip(request))
     return {"ok": True}
 

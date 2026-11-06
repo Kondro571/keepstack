@@ -11,17 +11,35 @@ drill-down sidebar.
 """
 from __future__ import annotations
 
+import threading
+import time
 from typing import Optional
 
 from . import ai
 from .db import get_conn
 
+# Each sort ends on the row id so pages are stable when values tie, and each
+# is backed by a (status, column) index in db.py.
 SORTS = {
-    "newest": "a.created_at DESC",
-    "oldest": "a.created_at ASC",
-    "name": "a.title ASC",
-    "largest": "a.size DESC",
+    "newest": "a.created_at DESC, a.id DESC",
+    "oldest": "a.created_at ASC, a.id ASC",
+    "name": "a.title ASC, a.id ASC",
+    "largest": "a.size DESC, a.id DESC",
 }
+
+# Columns needed for a grid card; never the embedding blob.
+_CARD_COLS = ("id, uuid, title, filename, media_type, mime_type, ext, size, width, height, "
+              "alt_text, status, created_at")
+
+FACETS_TTL = 60.0
+_facet_cache: dict[str, tuple[float, dict]] = {}
+_facet_lock = threading.Lock()
+
+
+def invalidate_facets() -> None:
+    """Drop cached sidebar counts; call after the catalog changes."""
+    with _facet_lock:
+        _facet_cache.clear()
 
 
 def _fts_query(q: str) -> str:
@@ -48,41 +66,53 @@ def search(
     if mode == "semantic" and q.strip():
         return _semantic_search(q, media_type, status, limit, offset)
 
+    # Every filter lives in WHERE so placeholders and params stay in order.
     where = ["a.status = ?"]
     params: list = [status]
-    join = ""
+    source = "assets a"
+    fts = _fts_query(q) if q.strip() else ""
 
-    if q.strip():
-        join += " JOIN asset_fts f ON f.rowid = a.id"
-        where.append("asset_fts MATCH ?")
-        params.append(_fts_query(q))
+    if fts:
+        # Resolve the full-text match first (one index lookup), then join.
+        # Otherwise SQLite may walk every asset and probe the FTS index once
+        # per row, which took ~40 s for a COUNT on a 100k catalog. "LIMIT -1"
+        # (no limit) stops the planner flattening the subquery into that plan.
+        source = ("(SELECT rowid AS id, bm25(asset_fts) AS rank FROM asset_fts "
+                  "WHERE asset_fts MATCH ? LIMIT -1) m JOIN assets a ON a.id = m.id")
+        params.insert(0, fts)
     if media_type:
         where.append("a.media_type = ?")
         params.append(media_type)
     if tag:
-        join += (" JOIN asset_tags at ON at.asset_id = a.id"
-                 " JOIN tags t ON t.id = at.tag_id AND t.name = ?")
+        where.append("a.id IN (SELECT at.asset_id FROM asset_tags at "
+                     "JOIN tags t ON t.id = at.tag_id WHERE t.name = ?)")
         params.append(tag.lower())
     if collection_id:
-        join += " JOIN collection_assets ca ON ca.asset_id = a.id AND ca.collection_id = ?"
+        where.append("a.id IN (SELECT asset_id FROM collection_assets WHERE collection_id = ?)")
         params.append(collection_id)
 
     where_sql = " AND ".join(where)
-    order = "bm25(asset_fts)" if q.strip() else SORTS.get(sort, SORTS["newest"])
+    order = "m.rank, a.id" if fts else SORTS.get(sort, SORTS["newest"])
 
     total = conn.execute(
-        f"SELECT COUNT(*) AS c FROM assets a{join} WHERE {where_sql}", params
+        f"SELECT COUNT(*) AS c FROM {source} WHERE {where_sql}", params
     ).fetchone()["c"]
 
-    rows = conn.execute(
-        f"""SELECT a.* FROM assets a{join} WHERE {where_sql}
-            ORDER BY {order} LIMIT ? OFFSET ?""",
+    # Page over ids only (served from the index), then load just those rows,
+    # so deep pages don't drag every skipped row through memory.
+    ids = [r["id"] for r in conn.execute(
+        f"SELECT a.id FROM {source} WHERE {where_sql} ORDER BY {order} LIMIT ? OFFSET ?",
         [*params, limit, offset],
-    ).fetchall()
+    )]
+    rows = {}
+    if ids:
+        marks = ",".join("?" * len(ids))
+        rows = {r["id"]: r for r in conn.execute(
+            f"SELECT {_CARD_COLS} FROM assets WHERE id IN ({marks})", ids)}
 
     return {
         "total": total,
-        "items": [_card(dict(r)) for r in rows],
+        "items": [_card(dict(rows[i])) for i in ids if i in rows],
         "facets": _facets(status),
         "mode": mode,
     }
@@ -134,6 +164,18 @@ def more_like(asset_id: int, limit: int = 12) -> list[dict]:
 
 
 def _facets(status: str) -> dict:
+    """Sidebar counts, cached because they scan the whole catalog."""
+    with _facet_lock:
+        hit = _facet_cache.get(status)
+    if hit and time.monotonic() - hit[0] < FACETS_TTL:
+        return hit[1]
+    data = _compute_facets(status)
+    with _facet_lock:
+        _facet_cache[status] = (time.monotonic(), data)
+    return data
+
+
+def _compute_facets(status: str) -> dict:
     conn = get_conn()
     media = conn.execute(
         "SELECT media_type, COUNT(*) c FROM assets WHERE status = ? GROUP BY media_type ORDER BY c DESC",

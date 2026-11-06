@@ -79,6 +79,11 @@ CREATE INDEX IF NOT EXISTS idx_assets_sha    ON assets (sha256);
 CREATE INDEX IF NOT EXISTS idx_assets_status ON assets (status);
 CREATE INDEX IF NOT EXISTS idx_assets_media  ON assets (media_type);
 CREATE INDEX IF NOT EXISTS idx_assets_created ON assets (created_at);
+-- Library sorts filter on status first; these keep paging off a full sort.
+CREATE INDEX IF NOT EXISTS idx_assets_status_created ON assets (status, created_at);
+CREATE INDEX IF NOT EXISTS idx_assets_status_title   ON assets (status, title);
+CREATE INDEX IF NOT EXISTS idx_assets_status_size    ON assets (status, size);
+CREATE INDEX IF NOT EXISTS idx_assets_status_media   ON assets (status, media_type);
 
 CREATE TABLE IF NOT EXISTS asset_metadata (
     asset_id  INTEGER PRIMARY KEY,
@@ -123,6 +128,8 @@ CREATE TABLE IF NOT EXISTS asset_tags (
     FOREIGN KEY (asset_id) REFERENCES assets (id) ON DELETE CASCADE,
     FOREIGN KEY (tag_id)   REFERENCES tags (id)   ON DELETE CASCADE
 );
+-- The primary key starts with asset_id; filtering "assets with tag X" needs this.
+CREATE INDEX IF NOT EXISTS idx_asset_tags_tag ON asset_tags (tag_id);
 
 CREATE TABLE IF NOT EXISTS collections (
     id          INTEGER PRIMARY KEY,

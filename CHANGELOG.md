@@ -45,6 +45,18 @@ semantic versioning.
 - Tidied the chrome: background scrolling now locks while the drawer or upload
   modal is open (one scrollbar instead of two), scrollbars are slim and themed,
   and the dropdown controls got a custom chevron with roomier padding.
+- The library is paged (60 per page, numbered pages) instead of showing only
+  the first 120 assets, and deep pages stay fast via id-only paging and
+  `(status, ...)` indexes. Sidebar facet counts are cached and refreshed when
+  the catalog changes. Media type and Top tags groups can be collapsed, and
+  that choice is stored per user (`/api/auth/me/preferences`).
+
+### Fixed
+
+- Filtering by tag or collection always returned nothing: the SQL parameters
+  were bound in the wrong order.
+- Keyword search took ~40 s on a 100k-asset catalog because SQLite probed the
+  full-text index once per asset; it now resolves the match once (~30 ms).
 
 ## [0.1.0] - 2026-06-28
 

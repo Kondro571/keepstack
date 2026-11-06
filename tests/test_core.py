@@ -480,3 +480,38 @@ def test_user_preferences_merge_and_persist():
     assert get_preferences(user) == {"facets_closed": ["tags"], "other": 1}
     with pytest.raises(HTTPException):
         update_preferences({"big": "x" * 10000}, user)
+
+
+def test_tag_and_collection_filters_return_matches():
+    a = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(1, 2, 3))), "filterme.jpg")
+    b = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(3, 2, 1))), "other.jpg")
+    with get_conn() as conn:
+        conn.execute("INSERT OR IGNORE INTO tags (name) VALUES ('onlyhere')")
+        tid = conn.execute("SELECT id FROM tags WHERE name = 'onlyhere'").fetchone()["id"]
+        conn.execute("INSERT INTO asset_tags (asset_id, tag_id) VALUES (?, ?)", (a["id"], tid))
+        cid = conn.execute(
+            "INSERT INTO collections (uuid, name, created_at) VALUES ('col-filter', 'c', '2026')").lastrowid
+        conn.execute("INSERT INTO collection_assets (collection_id, asset_id) VALUES (?, ?)", (cid, b["id"]))
+    by_tag = search.search(tag="onlyhere")
+    assert [i["uuid"] for i in by_tag["items"]] == [a["uuid"]] and by_tag["total"] == 1
+    by_col = search.search(collection_id=cid)
+    assert [i["uuid"] for i in by_col["items"]] == [b["uuid"]]
+    # filters combine with full-text search and keep placeholders in order
+    assert search.search(q="filterme", tag="onlyhere")["total"] == 1
+    assert search.search(q="other", tag="onlyhere")["total"] == 0
+
+
+def test_paging_is_stable_and_complete():
+    total = search.search(limit=1)["total"]
+    seen = []
+    for offset in range(0, total, 3):
+        seen += [i["uuid"] for i in search.search(limit=3, offset=offset)["items"]]
+    assert len(seen) == total == len(set(seen))
+    assert "embedding" not in search.search(limit=1)["items"][0]
+
+
+def test_facet_counts_refresh_after_catalog_change():
+    before = {m["value"]: m["count"] for m in search.search()["facets"]["media_types"]}
+    ingest.ingest_stream(io.BytesIO(b"plain text body"), "facet-note.txt")
+    after = {m["value"]: m["count"] for m in search.search()["facets"]["media_types"]}
+    assert after.get("document", 0) == before.get("document", 0) + 1

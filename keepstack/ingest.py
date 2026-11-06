@@ -13,7 +13,7 @@ import json
 import uuid as uuidlib
 from typing import BinaryIO, Optional
 
-from . import ai, metadata, ocr, storage, thumbnails
+from . import ai, metadata, ocr, search, storage, thumbnails
 from .audit import now_iso
 from .config import config
 from .db import get_conn, transaction
@@ -62,6 +62,9 @@ def reindex_fts(asset_id: int) -> None:
         ),
     )
     conn.commit()
+    # Every catalog edit (ingest, tags, metadata) reindexes, so this is the
+    # one place that keeps the cached sidebar counts honest.
+    search.invalidate_facets()
 
 
 def reindex_embedding(asset_id: int) -> None:
