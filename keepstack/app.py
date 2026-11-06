@@ -218,6 +218,74 @@ async def upload_assets(
     return {"created": results}
 
 
+BULK_MAX = 1000
+# Minimum role per bulk action, matching the single-asset endpoints.
+BULK_ACTIONS = {"delete": "editor", "tag": "contributor", "untag": "contributor",
+                "collection": "contributor"}
+
+
+@app.post("/api/assets/bulk")
+def bulk_assets(request: Request, body: dict = Body(...), user: dict = Depends(require_user)):
+    """Apply one action to many assets: delete, tag, untag, or add to a collection."""
+    action = body.get("action")
+    if action not in BULK_ACTIONS:
+        raise HTTPException(400, f"Unknown action; use one of {', '.join(BULK_ACTIONS)}")
+    if not role_at_least(user["role"], BULK_ACTIONS[action]):
+        raise HTTPException(403, f"Requires {BULK_ACTIONS[action]} role")
+    uuids = body.get("uuids")
+    if not isinstance(uuids, list) or not uuids or len(uuids) > BULK_MAX:
+        raise HTTPException(400, f"Send 1 to {BULK_MAX} asset uuids")
+    tag = (body.get("tag") or "").strip().lower()[:100]
+    if action in ("tag", "untag") and not tag:
+        raise HTTPException(400, "Tag name required")
+
+    with transaction() as conn:
+        marks = ",".join("?" * len(uuids))
+        assets = [dict(r) for r in conn.execute(
+            f"SELECT id, media_type FROM assets WHERE status = 'active' AND uuid IN ({marks})",
+            [str(u) for u in uuids])]
+        ids = [a["id"] for a in assets]
+        id_marks = ",".join("?" * len(ids))
+        detail = f"{len(ids)} assets"
+        changed = 0
+        if action == "collection":
+            col = conn.execute("SELECT id, name FROM collections WHERE id = ?",
+                               (body.get("collection_id"),)).fetchone()
+            if not col:
+                raise HTTPException(404, "Collection not found")
+            detail += f", collection={col['name']}"
+        if action in ("tag", "untag"):
+            detail += f", tag={tag}"
+        if ids:
+            if action == "tag":
+                conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,))
+                tid = conn.execute("SELECT id FROM tags WHERE name = ?", (tag,)).fetchone()["id"]
+            # `changed` counts only the rows this action touched (new links, removals...)
+            before = conn.total_changes
+            if action == "delete":
+                conn.execute(f"UPDATE assets SET status = 'deleted', updated_at = ? WHERE id IN ({id_marks})",
+                             [now_iso(), *ids])
+            elif action == "tag":
+                conn.executemany("INSERT OR IGNORE INTO asset_tags (asset_id, tag_id, source) VALUES (?, ?, 'manual')",
+                                 [(asset_id, tid) for asset_id in ids])
+            elif action == "untag":
+                conn.execute(f"DELETE FROM asset_tags WHERE tag_id = (SELECT id FROM tags WHERE name = ?) "
+                             f"AND asset_id IN ({id_marks})", [tag, *ids])
+            elif action == "collection":
+                conn.executemany(
+                    "INSERT OR IGNORE INTO collection_assets (collection_id, asset_id, added_at) VALUES (?,?,?)",
+                    [(col["id"], asset_id, now_iso()) for asset_id in ids])
+            changed = conn.total_changes - before
+
+    if action == "delete":
+        search.invalidate_facets()
+    elif action in ("tag", "untag"):
+        for a in assets:
+            ingest.reindex_after_tag_change(a["id"], a["media_type"])
+    log(f"asset.bulk_{action}", user=user, target_type="asset", detail=detail, ip=client_ip(request))
+    return {"action": action, "matched": len(ids), "changed": changed}
+
+
 @app.get("/api/assets")
 def list_assets(
     q: str = "",

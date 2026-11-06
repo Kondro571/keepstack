@@ -112,10 +112,31 @@ def search(
 
     return {
         "total": total,
-        "items": [_card(dict(rows[i])) for i in ids if i in rows],
+        "items": _attach_tags([_card(dict(rows[i])) for i in ids if i in rows]),
         "facets": _facets(status),
         "mode": mode,
     }
+
+
+def _attach_tags(items: list[dict], per_item: int = 5) -> list[dict]:
+    """Add a short tag preview (``tags``) and the full ``tag_count`` to each
+    card, in one query for the whole page. Hand-added tags come first."""
+    if not items:
+        return items
+    ids = [i["id"] for i in items]
+    marks = ",".join("?" * len(ids))
+    names: dict[int, list[str]] = {i: [] for i in ids}
+    for r in get_conn().execute(
+        f"""SELECT at.asset_id, t.name FROM asset_tags at JOIN tags t ON t.id = at.tag_id
+            WHERE at.asset_id IN ({marks})
+            ORDER BY at.asset_id,
+                     CASE at.source WHEN 'manual' THEN 0 WHEN 'import' THEN 1
+                                    WHEN 'embedded' THEN 2 ELSE 3 END, t.name""", ids):
+        names[r["asset_id"]].append(r["name"])
+    for item in items:
+        item["tags"] = names[item["id"]][:per_item]
+        item["tag_count"] = len(names[item["id"]])
+    return items
 
 
 def _semantic_search(q, media_type, status, limit, offset) -> dict:
@@ -140,7 +161,7 @@ def _semantic_search(q, media_type, status, limit, offset) -> dict:
         card = _card(dict(r))
         card["score"] = round(score, 4)
         items.append(card)
-    return {"total": len(scored), "items": items, "facets": _facets(status), "mode": "semantic"}
+    return {"total": len(scored), "items": _attach_tags(items), "facets": _facets(status), "mode": "semantic"}
 
 
 def more_like(asset_id: int, limit: int = 12) -> list[dict]:

@@ -2,7 +2,8 @@
  *
  *   core.js         shared helpers ($, api, toast, esc) and state
  *   router.js       per-view URLs and navigation
- *   library.js      search, grid, paging, sidebar facets, user preferences
+ *   library.js      search, grid/list layout, paging, sidebar facets, user preferences
+ *   bulk.js         multi-select and bulk actions (tag, collection, delete)
  *   asset.js        asset detail drawer
  *   upload.js       upload dialog and tag import
  *   collections.js  collections view
@@ -15,6 +16,7 @@
 import { $, $$, api, roleAtLeast, setUnauthorizedHandler, state } from "./core.js";
 import { route } from "./router.js";
 import { loadPrefs } from "./library.js";
+import { clearSelection } from "./bulk.js";
 import "./asset.js";
 import "./upload.js";
 import "./collections.js";
@@ -32,7 +34,7 @@ $("#login-form").addEventListener("submit", async (e) => {
 });
 $("#btn-logout").addEventListener("click", logout);
 setUnauthorizedHandler(logout);
-function logout() { localStorage.removeItem("keepstack_token"); state.token = null; state.user = null;
+function logout() { localStorage.removeItem("keepstack_token"); state.token = null; state.user = null; clearSelection();
   $("#app").classList.add("hidden"); $("#login").classList.remove("hidden"); }
 
 function enterApp() {

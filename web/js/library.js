@@ -1,7 +1,8 @@
-// Library view: search, sort, paging, the asset grid and the sidebar facets.
+// Library view: search, sort, paging, grid/list layout, and the sidebar facets.
 import { $, $$, api, esc, fmtBytes, isPlainClick, state } from "./core.js";
 import { currentView, registerView, route } from "./router.js";
 import { openAsset } from "./asset.js";
+import { canSelect, clearSelection, selected, selectPage, setPage, toggle } from "./bulk.js";
 
 let searchTimer;
 // typing replaces the history entry instead of adding one per keystroke
@@ -13,6 +14,19 @@ $("#active-filter").addEventListener("click", () => { state.media = null; state.
 const PAGE_SIZES = [10, 50, 100, 500];
 let prefPageSize = 50, pageSize = 50, page = 1, lastFilterKey = "", librarySeq = 0;
 const filterKey = () => JSON.stringify([state.q, state.mode, state.sort, state.media, state.tag, state.collection]);
+// Same files regardless of order; a different result set drops the selection.
+const resultSetKey = () => JSON.stringify([state.q, state.mode, state.media, state.tag, state.collection]);
+let lastResultSetKey = null;
+
+// Grid (cards) or list (rows with tags and details); a per-user preference.
+const LAYOUTS = ["grid", "list"];
+let layout = "grid", lastPage = null;
+$$(".view-toggle [data-layout]").forEach(b => b.addEventListener("click", () => {
+  if (layout === b.dataset.layout) return;
+  layout = b.dataset.layout;
+  api("/api/auth/me/preferences", { method: "PATCH", json: { library_layout: layout } }).catch(() => {});
+  if (lastPage) renderResults(lastPage.items, lastPage.total);
+}));
 $("#page-size").addEventListener("change", (e) => {
   // keep roughly the same place in the list: the first item stays on screen
   const first = (page - 1) * pageSize;
@@ -61,6 +75,10 @@ export async function loadLibrary({ push = true } = {}) {
   const fromOtherView = currentView() !== "library";
   // Any change of search, filter or sort starts again from page 1.
   if (filterKey() !== lastFilterKey) { page = 1; lastFilterKey = filterKey(); }
+  if (resultSetKey() !== lastResultSetKey) {
+    if (lastResultSetKey !== null && selected.size) clearSelection();
+    lastResultSetKey = resultSetKey();
+  }
   const url = libraryUrl();
   if (url !== location.pathname + location.search) history[push || fromOtherView ? "pushState" : "replaceState"](null, "", url);
   if (fromOtherView) return route();
@@ -76,26 +94,73 @@ export async function loadLibrary({ push = true } = {}) {
     page = Math.ceil(data.total / pageSize); return loadLibrary({ push: false });
   }
   renderFacets(data.facets);
-  renderGrid(data.items, data.total);
+  renderResults(data.items, data.total);
   renderPager(data.total);
   const filt = state.media || (state.tag ? "#" + state.tag : null) || (state.collection ? "collection" : null);
   $("#active-filter").classList.toggle("hidden", !filt);
   if (filt) $("#active-filter").textContent = filt;
 }
 
-function renderGrid(items, total) {
+function renderResults(items, total) {
+  lastPage = { items, total };
   $("#result-title").textContent = state.q ? `Results (${total})` : `Library (${total})`;
   $("#empty").classList.toggle("hidden", items.length > 0);
-  $("#grid").innerHTML = items.map(a => `
-    <div class="card" data-uuid="${a.uuid}">
-      <img class="thumb" loading="lazy" src="/api/assets/${a.uuid}/thumb" alt="${esc(a.alt_text || a.title)}">
-      <div class="meta">
-        <span class="title" title="${esc(a.title)}">${esc(a.title)}</span>
-        <span class="sub"><span class="badge">${a.media_type}</span><span>${fmtBytes(a.size)}</span></span>
-      </div>
-    </div>`).join("");
-  $$("#grid .card").forEach(c => c.addEventListener("click", () => openAsset(c.dataset.uuid)));
+  $$(".view-toggle [data-layout]").forEach(b => b.classList.toggle("active", b.dataset.layout === layout));
+  const sel = canSelect();
+  $(".select-page").classList.toggle("hidden", !sel || !items.length);
+  const grid = $("#grid");
+  grid.className = layout === "list" ? "results-list" : "grid";
+  grid.classList.toggle("can-select", sel);
+  const check = (a) => sel ? `<input type="checkbox" data-select="${a.uuid}" aria-label="Select ${esc(a.title)}">` : "";
+
+  if (layout === "list") {
+    const tags = (a) => a.tags.map(t => `<span class="tag">${esc(t)}</span>`).join("")
+      + (a.tag_count > a.tags.length ? `<span class="more">+${a.tag_count - a.tags.length}</span>` : "");
+    grid.innerHTML = items.length ? `<table class="asset-list">
+      <thead><tr>
+        ${sel ? '<th class="col-check"><input type="checkbox" class="select-all" aria-label="Select page"></th>' : ""}
+        <th></th><th>Name</th><th class="col-type">Type</th><th class="col-tags">Tags</th>
+        <th>Size</th><th class="col-dims">Dimensions</th><th class="col-date">Added</th>
+      </tr></thead>
+      <tbody>${items.map(a => `<tr data-uuid="${a.uuid}">
+        ${sel ? `<td class="col-check">${check(a)}</td>` : ""}
+        <td><img class="mini" loading="lazy" src="/api/assets/${a.uuid}/thumb" alt=""></td>
+        <td><div class="name" title="${esc(a.title)}">${esc(a.title)}</div><div class="file" title="${esc(a.filename)}">${esc(a.filename)}</div></td>
+        <td class="col-type"><span class="badge">${a.media_type}</span> <span class="num">${esc((a.ext || "").toUpperCase())}</span></td>
+        <td class="col-tags"><div class="tags">${tags(a)}</div></td>
+        <td class="num">${fmtBytes(a.size)}</td>
+        <td class="num col-dims">${a.width ? `${a.width}&times;${a.height}` : "&mdash;"}</td>
+        <td class="num col-date">${(a.created_at || "").slice(0, 10)}</td>
+      </tr>`).join("")}</tbody></table>` : "";
+  } else {
+    grid.innerHTML = items.map(a => `
+      <div class="card" data-uuid="${a.uuid}">
+        ${sel ? `<label class="select-box">${check(a)}</label>` : ""}
+        <img class="thumb" loading="lazy" src="/api/assets/${a.uuid}/thumb" alt="${esc(a.alt_text || a.title)}">
+        <div class="meta">
+          <span class="title" title="${esc(a.title)}">${esc(a.title)}</span>
+          <span class="sub"><span class="badge">${a.media_type}</span><span>${fmtBytes(a.size)}</span></span>
+        </div>
+      </div>`).join("");
+  }
+  setPage(items.map(a => a.uuid));
 }
+
+// One listener for both layouts: checkboxes select, anything else opens the asset.
+// Ctrl/Cmd-click selects too, Shift selects a range on the page.
+$("#grid").addEventListener("click", (e) => {
+  const cb = e.target.closest("[data-select]");
+  if (cb) { toggle(cb.dataset.select, cb.checked, { range: e.shiftKey }); return; }
+  if (e.target.closest(".select-box, .col-check")) return;  // padding around a checkbox
+  const item = e.target.closest("[data-uuid]");
+  if (!item) return;
+  if (canSelect() && (e.ctrlKey || e.metaKey || e.shiftKey)) {
+    toggle(item.dataset.uuid, !selected.has(item.dataset.uuid), { range: e.shiftKey });
+    return;
+  }
+  openAsset(item.dataset.uuid);
+});
+$("#grid").addEventListener("change", (e) => { if (e.target.matches(".select-all")) selectPage(e.target.checked); });
 
 function renderPager(total) {
   const pages = Math.ceil(total / pageSize);
@@ -147,6 +212,7 @@ export async function loadPrefs() {
   closedFacets = prefs.facets_closed || [];
   $$(".facet-group[data-group]").forEach(g => { g.open = !closedFacets.includes(g.dataset.group); });
   prefPageSize = PAGE_SIZES.includes(prefs.page_size) ? prefs.page_size : 50;
+  layout = LAYOUTS.includes(prefs.library_layout) ? prefs.library_layout : "grid";
 }
 $$(".facet-group[data-group]").forEach(g => {
   // toggle also fires (async) for programmatic changes; only save real differences

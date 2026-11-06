@@ -4,6 +4,7 @@ import { $, $$, api, esc, fmtBytes, notifyCatalogChanged, roleAtLeast, toast } f
 const drawer = $("#drawer");
 $("#drawer-close").addEventListener("click", closeDrawer);
 $(".drawer-backdrop").addEventListener("click", closeDrawer);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !drawer.classList.contains("hidden")) closeDrawer(); });
 function closeDrawer() { drawer.classList.add("hidden"); document.body.classList.remove("modal-open"); }
 
 export async function openAsset(uuid) {

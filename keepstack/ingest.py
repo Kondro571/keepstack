@@ -88,6 +88,16 @@ def reindex_embedding(asset_id: int) -> None:
     conn.commit()
 
 
+def reindex_after_tag_change(asset_id: int, media_type: str) -> None:
+    """Refresh what depends on an asset's tags. With the local vision model an
+    image's embedding comes from its pixels, which tags don't change, so the
+    costly image re-embed is skipped there."""
+    from . import vision
+    reindex_fts(asset_id)
+    if media_type != "image" or not vision.ready():
+        reindex_embedding(asset_id)
+
+
 def ingest_stream(
     src: BinaryIO,
     filename: str,

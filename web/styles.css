@@ -156,6 +156,60 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .badge { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--accent); }
 .empty { padding: var(--s5); text-align: center; color: var(--muted); }
 
+/* selection checkbox: on cards it shows on hover, or always once anything is selected */
+.card { position: relative; }
+.select-box { position: absolute; top: var(--s1); left: var(--s1); z-index: 1; display: none;
+  background: var(--base-1); border-radius: 6px; padding: 4px; line-height: 0; box-shadow: 0 1px 4px rgba(29,36,51,.2); }
+.select-box input, .asset-list input[type=checkbox], .select-page input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.can-select .card:hover .select-box, .can-select.selecting .select-box, .card.selected .select-box { display: block; }
+.card.selected { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-dim); }
+
+.view-toggle { display: flex; border: 1px solid var(--base-3); border-radius: var(--radius-sm); overflow: hidden; }
+.view-toggle .btn { border: none; border-radius: 0; padding: 6px 12px; font-size: 16px; line-height: 1; }
+.view-toggle .btn.active { background: var(--accent-dim); color: var(--accent); }
+.select-page { white-space: nowrap; }
+
+/* list layout */
+.results-list { display: block; }
+.asset-list { width: 100%; border-collapse: collapse; background: var(--base-1); border-radius: var(--radius); overflow: hidden; }
+.asset-list th, .asset-list td { text-align: left; padding: var(--s1) var(--s2); border-bottom: 1px solid var(--base-3); font-size: 14px; vertical-align: middle; }
+.asset-list th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+.asset-list tr:last-child td { border-bottom: none; }
+.asset-list tbody tr { cursor: pointer; }
+.asset-list tbody tr:hover { background: var(--base-0); }
+.asset-list tr.selected { background: var(--accent-dim); }
+.asset-list .col-check { width: 36px; }
+.asset-list .mini { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; background: var(--base-0); display: block; }
+.asset-list .name { font-weight: 600; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asset-list .file { color: var(--muted); font-size: 12px; max-width: 340px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.asset-list .tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.asset-list .tags .tag { font-size: 12px; padding: 1px 8px; }
+.asset-list .more { color: var(--muted); font-size: 12px; align-self: center; }
+.asset-list .num { white-space: nowrap; color: var(--muted); font-size: 13px; }
+.asset-list .col-type { white-space: nowrap; }
+@media (max-width: 1100px) { .asset-list .col-dims, .asset-list .col-date { display: none; } }
+@media (max-width: 760px) { .asset-list .col-type, .asset-list .col-tags { display: none; } }
+
+/* bulk action bar, pinned to the bottom of the screen while files are selected.
+   Fixed, not sticky: .content scrolls with the page, so sticky would never engage. */
+.bulk-bar {
+  position: fixed; bottom: var(--s2); left: calc(260px + var(--s4)); right: var(--s4); z-index: 20;
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2);
+  background: var(--base-1); border: 1px solid var(--accent); border-radius: var(--radius);
+  padding: var(--s2) var(--s3); box-shadow: var(--shadow);
+}
+.bulk-bar .spacer { flex: 1; }
+/* keep the last row and the pager clear of the bar */
+#view-library:has(#bulk-bar:not(.hidden)) { padding-bottom: 120px; }
+body:has(#bulk-bar:not(.hidden)) .toast { bottom: 120px; }
+@media (max-width: 880px) { .bulk-bar { left: var(--s2); right: var(--s2); } }
+.bulk-group { display: flex; align-items: center; gap: var(--s1); }
+.bulk-bar input, .bulk-bar select {
+  background: var(--base-0); border: 1px solid var(--base-3); color: var(--text);
+  padding: 6px var(--s1); border-radius: var(--radius-sm);
+}
+.bulk-bar input { width: 140px; }
+
 /* ---------- drawer (asset detail) ---------- */
 .drawer { position: fixed; inset: 0; z-index: 40; }
 .drawer-backdrop, .modal-backdrop { position: absolute; inset: 0; background: rgba(29,36,51,0.35); }
@@ -182,7 +236,7 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .tag-row { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
 
 /* ---------- users ---------- */
-.user-form { width: min(600px, 94vw); max-height: 92vh; overflow: auto; }
+.user-form { width: min(600px, 94vw); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
 .form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
 .form-grid input {
@@ -225,13 +279,25 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .modal-card {
   position: relative; background: var(--base-1); border: 1px solid var(--base-3); border-radius: var(--radius);
   padding: var(--s4); width: min(540px, 94vw); box-shadow: var(--shadow); display: flex; flex-direction: column; gap: var(--s3);
+  /* never taller than the screen: the body scrolls, title and buttons stay put */
+  max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px);
 }
-.modal-card h3 { margin: 0; }
+.modal-card h3 { margin: 0; flex-shrink: 0; }
+.modal-body {
+  display: flex; flex-direction: column; gap: var(--s3);
+  flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  margin: 0 calc(-1 * var(--s1)); padding: 0 var(--s1);  /* room for focus rings and the scrollbar */
+}
+.modal-body > * { flex-shrink: 0; }  /* scroll the body instead of squashing its parts */
+.modal-actions { flex-shrink: 0; }
+.upload-summary { margin: 0; font-size: 13px; }
 .dropzone {
   border: 2px dashed var(--base-3); border-radius: var(--radius); padding: var(--s5); text-align: center;
   color: var(--muted); cursor: pointer; transition: border-color .15s, background .15s;
 }
 .dropzone.drag { border-color: var(--accent); background: var(--accent-dim); color: var(--text); }
+.dropzone-small { padding: var(--s3); align-self: stretch; }
+.dropzone-small p { margin: 0; font-size: 13px; }
 .check { display: flex; align-items: center; gap: var(--s1); color: var(--muted); font-size: 14px; }
 .upload-list { display: flex; flex-direction: column; gap: var(--s1); max-height: 200px; overflow: auto; }
 .upload-item { display: flex; justify-content: space-between; padding: var(--s1) var(--s2); background: var(--base-2); border-radius: var(--radius-sm); font-size: 13px; }

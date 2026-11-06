@@ -573,3 +573,48 @@ def test_user_management_validates_and_protects_admins():
 
     delete_user(up["id"], _req(), admin)
     assert get_conn().execute("SELECT 1 FROM users WHERE id=?", (up["id"],)).fetchone() is None
+
+
+def test_bulk_actions_tag_collect_untag_delete_and_roles():
+    from fastapi import HTTPException
+    from keepstack.app import _startup, bulk_assets
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+    viewer = {**admin, "role": "viewer"}
+    contributor = {**admin, "role": "contributor"}
+    a = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(11, 22, 33))), "bulk-a.jpg")
+    b = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(33, 22, 11))), "bulk-b.jpg")
+    both = [a["uuid"], b["uuid"], "no-such-uuid"]
+
+    r = bulk_assets(_req(), {"action": "tag", "uuids": both, "tag": " BulkTag "}, contributor)
+    assert r == {"action": "tag", "matched": 2, "changed": 2}
+    assert bulk_assets(_req(), {"action": "tag", "uuids": both, "tag": "bulktag"}, contributor)["changed"] == 0
+    assert search.search(tag="bulktag")["total"] == 2
+    card = next(i for i in search.search(tag="bulktag")["items"] if i["uuid"] == a["uuid"])
+    assert "bulktag" in card["tags"] and card["tag_count"] >= 1
+
+    with get_conn() as conn:
+        cid = conn.execute("INSERT INTO collections (uuid, name, created_at) "
+                           "VALUES ('col-bulk', 'Bulk', '2026')").lastrowid
+    assert bulk_assets(_req(), {"action": "collection", "uuids": both, "collection_id": cid},
+                       contributor)["changed"] == 2
+    assert search.search(collection_id=cid)["total"] == 2
+    with pytest.raises(HTTPException) as e:
+        bulk_assets(_req(), {"action": "collection", "uuids": both, "collection_id": 999999}, contributor)
+    assert e.value.status_code == 404
+
+    assert bulk_assets(_req(), {"action": "untag", "uuids": [a["uuid"]], "tag": "bulktag"},
+                       contributor)["changed"] == 1
+    assert search.search(tag="bulktag")["total"] == 1
+
+    for who, action in ((viewer, "tag"), (contributor, "delete")):
+        with pytest.raises(HTTPException) as e:
+            bulk_assets(_req(), {"action": action, "uuids": both, "tag": "x"}, who)
+        assert e.value.status_code == 403
+    with pytest.raises(HTTPException):
+        bulk_assets(_req(), {"action": "explode", "uuids": both}, admin)
+    with pytest.raises(HTTPException):
+        bulk_assets(_req(), {"action": "delete", "uuids": []}, admin)
+
+    assert bulk_assets(_req(), {"action": "delete", "uuids": both}, admin)["changed"] == 2
+    assert search.search(collection_id=cid)["total"] == 0

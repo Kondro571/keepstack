@@ -73,6 +73,7 @@ const modal = $("#user-modal");
 $("#btn-new-user").addEventListener("click", () => openUserForm(null));
 $("#uf-cancel").addEventListener("click", closeUserForm);
 $("#user-modal .modal-backdrop").addEventListener("click", closeUserForm);
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.classList.contains("hidden")) closeUserForm(); });
 
 function openUserForm(user) {
   editing = user;

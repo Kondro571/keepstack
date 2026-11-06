@@ -73,6 +73,13 @@
             <h2 id="result-title">Library</h2>
             <div class="view-controls">
               <span id="active-filter" class="chip hidden"></span>
+              <label class="check select-page hidden" title="Select every file on this page">
+                <input type="checkbox" id="select-page"> Select page
+              </label>
+              <div class="view-toggle" role="group" aria-label="Layout">
+                <button type="button" class="btn btn-ghost" data-layout="grid" title="Grid" aria-label="Grid view">&#9638;</button>
+                <button type="button" class="btn btn-ghost" data-layout="list" title="List" aria-label="List view">&#9776;</button>
+              </div>
               <select id="sort">
                 <option value="newest">Newest</option>
                 <option value="oldest">Oldest</option>
@@ -90,6 +97,20 @@
           <div id="grid" class="grid"></div>
           <nav id="pager" class="pager hidden" aria-label="Pages"></nav>
           <div id="empty" class="empty hidden">No assets yet. Click Upload to get started.</div>
+
+          <!-- appears while files are selected -->
+          <div id="bulk-bar" class="bulk-bar hidden" role="region" aria-label="Bulk actions">
+            <strong id="bulk-count"></strong>
+            <button type="button" id="bulk-clear" class="btn btn-ghost">Clear</button>
+            <span class="spacer"></span>
+            <form id="bulk-tag-form" class="bulk-group">
+              <input id="bulk-tag" placeholder="Tag name" maxlength="100" autocomplete="off">
+              <button type="submit" class="btn">Add tag</button>
+              <button type="button" id="bulk-untag" class="btn btn-ghost">Remove tag</button>
+            </form>
+            <select id="bulk-collection" class="bulk-group" aria-label="Add to collection"></select>
+            <button type="button" id="bulk-delete" class="btn btn-danger">Delete</button>
+          </div>
         </div>
 
         <div id="view-collections" class="view hidden">
@@ -139,18 +160,23 @@
     <div class="modal-backdrop"></div>
     <div class="modal-card">
       <h3>Upload assets</h3>
-      <div id="dropzone" class="dropzone">
-        <p>Drag files here or click to browse</p>
-        <input id="file-input" type="file" multiple hidden>
-      </div>
-      <label class="check"><input type="checkbox" id="ai-toggle" checked> Run AI enrichment (tags, alt-text)</label>
-      <div id="upload-list" class="upload-list"></div>
-      <div class="tag-import">
-        <h4>Import tags</h4>
-        <p class="muted">CSV, XLSX or XML. First column: file name (e.g. <code>logo.ai</code>) or UUID; next columns: tags. Several tags in one cell can be separated with <code>;</code> or <code>,</code>.</p>
-        <button id="btn-tag-import" class="btn btn-ghost">Choose tag file...</button>
-        <input id="tag-import-input" type="file" accept=".csv,.xlsx,.xml" hidden>
-        <div id="tag-import-result" class="upload-list"></div>
+      <div class="modal-body">
+        <div id="dropzone" class="dropzone">
+          <p>Drag files here or click to browse</p>
+          <input id="file-input" type="file" multiple hidden>
+        </div>
+        <label class="check"><input type="checkbox" id="ai-toggle" checked> Run AI enrichment (tags, alt-text)</label>
+        <p id="upload-summary" class="muted upload-summary hidden"></p>
+        <div id="upload-list" class="upload-list"></div>
+        <div class="tag-import">
+          <h4>Import tags</h4>
+          <p class="muted">CSV, XLSX or XML. First column: file name (e.g. <code>logo.ai</code>) or UUID; next columns: tags. Several tags in one cell can be separated with <code>;</code> or <code>,</code>.</p>
+          <div id="tag-dropzone" class="dropzone dropzone-small" role="button" tabindex="0">
+            <p>Drag a CSV, XLSX or XML file here or click to choose</p>
+            <input id="tag-import-input" type="file" accept=".csv,.xlsx,.xml" multiple hidden>
+          </div>
+          <div id="tag-import-result" class="upload-list"></div>
+        </div>
       </div>
       <div class="modal-actions">
         <button id="upload-cancel" class="btn btn-ghost">Close</button>
@@ -163,6 +189,7 @@
     <div class="modal-backdrop"></div>
     <form id="user-form" class="modal-card user-form" novalidate>
       <h3 id="uf-title">Add user</h3>
+      <div class="modal-body">
       <div class="form-grid">
         <label>Username<input id="uf-username" autocomplete="off" maxlength="64"></label>
         <label>Full name<input id="uf-full_name" autocomplete="off" maxlength="200"></label>
@@ -175,6 +202,7 @@
       </fieldset>
       <label class="check"><input type="checkbox" id="uf-active" checked> Active (can sign in)</label>
       <p id="uf-error" class="error hidden"></p>
+      </div>
       <div class="modal-actions">
         <button type="button" id="uf-cancel" class="btn btn-ghost">Cancel</button>
         <button type="submit" id="uf-submit" class="btn btn-primary">Create user</button>

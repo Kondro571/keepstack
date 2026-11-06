@@ -8,6 +8,15 @@ semantic versioning.
 
 ### Added
 
+- Library list layout next to the grid: small thumbnail, title, file name,
+  type, a preview of tags, size, dimensions and date. The choice is stored per
+  user. Search results now include `tags` (up to 5) and `tag_count`.
+- Multi-select with bulk actions: checkboxes on cards and rows, Shift for a
+  range, Ctrl/Cmd-click, "Select page", and a selection that survives paging
+  (it is cleared when the search or filters change). A bar offers add/remove
+  tag, add to a (new) collection and delete, via `POST /api/assets/bulk`
+  with the same role rules as the single-asset endpoints.
+
 - User management: a real add/edit form with role cards, inline role change,
   disable/enable and delete (`DELETE /api/users/{id}`, `GET /api/roles`).
   New `uploader` role (browse and add files, no editing). The server validates
@@ -68,6 +77,14 @@ semantic versioning.
   stale script.
 
 ### Fixed
+
+- Dialogs (upload, add/edit user) are capped to the screen height with a
+  scrolling body, so after uploading many files the Close button no longer
+  falls off-screen. The upload dialog shows a running "N of M processed"
+  count, and Esc closes dialogs and the asset drawer. Reopening the upload
+  dialog starts clean (unless an upload is still running), tag files can be
+  dragged onto their own drop zone, and a file dropped beside a drop zone no
+  longer opens in the tab.
 
 - Filtering by tag or collection always returned nothing: the SQL parameters
   were bound in the wrong order.
