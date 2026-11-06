@@ -138,6 +138,20 @@ CREATE TABLE IF NOT EXISTS asset_tags (
 -- The primary key starts with asset_id; filtering "assets with tag X" needs this.
 CREATE INDEX IF NOT EXISTS idx_asset_tags_tag ON asset_tags (tag_id);
 
+-- Per-language labels for a tag (e.g. dog -> pl "pies"), see vocab.py.
+-- source: 'manual' (typed by a person) or 'auto' (machine translation).
+CREATE TABLE IF NOT EXISTS tag_translations (
+    tag_id     INTEGER NOT NULL,
+    lang       TEXT NOT NULL,
+    label      TEXT NOT NULL,
+    source     TEXT NOT NULL DEFAULT 'manual',
+    updated_at TEXT,
+    PRIMARY KEY (tag_id, lang),
+    FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
+);
+-- Label lookups: resolving typed labels and expanding search terms.
+CREATE INDEX IF NOT EXISTS idx_tag_translations_label ON tag_translations (label);
+
 CREATE TABLE IF NOT EXISTS collections (
     id          INTEGER PRIMARY KEY,
     uuid        TEXT UNIQUE NOT NULL,

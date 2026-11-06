@@ -21,7 +21,7 @@ from fastapi.responses import (FileResponse, HTMLResponse, JSONResponse,
                                PlainTextResponse, Response)
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, ingest, search, standards, storage, tagimport, thumbnails
+from . import __version__, ingest, search, standards, storage, tagimport, thumbnails, vocab
 from .audit import log, now_iso
 from .auth import (OFFERED_ROLES, ROLE_INFO, ROLES, authenticate, hash_password,
                    login_locked, make_token, note_login_failure, note_login_success,
@@ -322,11 +322,12 @@ def bulk_assets(request: Request, body: dict = Body(...), user: dict = Depends(r
     uuids = body.get("uuids")
     if not isinstance(uuids, list) or not uuids or len(uuids) > BULK_MAX:
         raise HTTPException(400, f"Send 1 to {BULK_MAX} asset uuids")
-    tag = (body.get("tag") or "").strip().lower()[:100]
+    tag = vocab.clean(body.get("tag"))[:100]
     if action in ("tag", "untag") and not tag:
         raise HTTPException(400, "Tag name required")
 
     with transaction() as conn:
+        tag = vocab.resolve(conn, tag) if tag else tag  # "pies" means the tag "dog"
         marks = ",".join("?" * len(uuids))
         assets = [dict(r) for r in conn.execute(
             f"SELECT id, media_type FROM assets WHERE status = 'active' AND uuid IN ({marks})",
@@ -345,8 +346,7 @@ def bulk_assets(request: Request, body: dict = Body(...), user: dict = Depends(r
             detail += f", tag={tag}"
         if ids:
             if action == "tag":
-                conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,))
-                tid = conn.execute("SELECT id FROM tags WHERE name = ?", (tag,)).fetchone()["id"]
+                tid = vocab.ensure_tag(conn, tag)
             # `changed` counts only the rows this action touched (new links, removals...)
             before = conn.total_changes
             if action == "delete":
@@ -503,12 +503,12 @@ def asset_similar(uuid: str, user: dict = Depends(require_user)):
 def add_tag(uuid: str, request: Request, body: dict = Body(...),
             user: dict = Depends(require_role("contributor"))):
     a = _get_asset_or_404(uuid)
-    name = (body.get("name") or "").strip().lower()
+    name = vocab.clean(body.get("name"))
     if not name:
         raise HTTPException(400, "Tag name required")
     with transaction() as conn:
-        conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
-        tid = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()["id"]
+        name = vocab.resolve(conn, name)  # a translated label adds the tag it belongs to
+        tid = vocab.ensure_tag(conn, name)
         conn.execute("INSERT OR IGNORE INTO asset_tags (asset_id, tag_id, source) VALUES (?,?,?)",
                      (a["id"], tid, "manual"))
     ingest.reindex_fts(a["id"])
@@ -523,7 +523,7 @@ def remove_tag(uuid: str, name: str, user: dict = Depends(require_role("contribu
     with transaction() as conn:
         conn.execute(
             "DELETE FROM asset_tags WHERE asset_id = ? AND tag_id = "
-            "(SELECT id FROM tags WHERE name = ?)", (a["id"], name.lower()))
+            "(SELECT id FROM tags WHERE name = ?)", (a["id"], vocab.resolve(conn, name)))
     ingest.reindex_fts(a["id"])
     return {"ok": True}
 
@@ -572,12 +572,44 @@ def asset_metadata(uuid: str, user: dict = Depends(require_user)):
 @app.get("/api/tags")
 def list_tags(user: dict = Depends(require_user)):
     # Counts only active assets, matching what a tag filter would return.
+    # Grouped once by tag id first; joining and grouping by name took ~3 s on
+    # 100k assets / 500k tag links.
     rows = get_conn().execute(
-        "SELECT t.name, COUNT(a.id) c FROM tags t "
-        "LEFT JOIN asset_tags at ON at.tag_id = t.id "
-        "LEFT JOIN assets a ON a.id = at.asset_id AND a.status = 'active' "
-        "GROUP BY t.name ORDER BY c DESC, t.name").fetchall()
+        "SELECT t.name, COALESCE(n.c, 0) c FROM tags t "
+        "LEFT JOIN (SELECT at.tag_id, COUNT(*) c FROM asset_tags at "
+        "           JOIN assets a ON a.id = at.asset_id AND a.status = 'active' "
+        "           GROUP BY at.tag_id) n ON n.tag_id = t.id "
+        "ORDER BY c DESC, t.name").fetchall()
     return {"tags": [dict(r) for r in rows]}
+
+
+@app.get("/api/tags/labels")
+def tag_labels(lang: str = Query(..., pattern="^[a-z]{2}$"), user: dict = Depends(require_user)):
+    # The client shows these instead of tag names; filters keep using names.
+    return {"lang": lang, "labels": vocab.labels(lang)}
+
+
+@app.get("/api/tags/vocabulary")
+def tag_vocabulary(q: str = "", missing: Optional[str] = None, limit: int = Query(100, le=500),
+                   offset: int = 0, user: dict = Depends(require_role("contributor"))):
+    return {"langs": vocab.TAG_LANGS, **vocab.listing(q, missing, limit, offset)}
+
+
+@app.put("/api/tags/{tag_id}/translations/{lang}")
+def set_tag_translation(tag_id: int, lang: str, request: Request, body: dict = Body(...),
+                        user: dict = Depends(require_role("contributor"))):
+    if lang not in vocab.TAG_LANGS:
+        raise HTTPException(400, f"Language must be one of {', '.join(vocab.TAG_LANGS)}")
+    try:
+        with transaction() as conn:
+            if not conn.execute("SELECT 1 FROM tags WHERE id = ?", (tag_id,)).fetchone():
+                raise HTTPException(404, "Tag not found")
+            label = vocab.set_label(conn, tag_id, lang, body.get("label") or "")
+    except vocab.LabelConflict as exc:
+        raise HTTPException(409, str(exc))
+    log("tag.translate", user=user, target_type="tag", target_id=tag_id,
+        detail=f"{lang}={label or '(removed)'}", ip=client_ip(request))
+    return {"tag_id": tag_id, "lang": lang, "label": label}
 
 
 @app.post("/api/tags/import")
@@ -741,18 +773,38 @@ def _valid_share(token: str) -> tuple[dict, dict]:
     return s, dict(a)
 
 
+# The public share page has no signed-in user, so it follows the visitor's
+# browser language (Accept-Language); English otherwise.
+SHARE_TEXT = {
+    "en": {"shared": "Shared via Keepstack", "download": "Download original",
+           "footer": "Shared securely via Keepstack"},
+    "pl": {"shared": "Udostępnione przez Keepstack", "download": "Pobierz oryginał",
+           "footer": "Bezpiecznie udostępnione przez Keepstack"},
+}
+
+
+def _share_lang(request: Request) -> str:
+    for part in request.headers.get("accept-language", "").split(","):
+        code = part.split(";")[0].strip().lower()[:2]
+        if code in SHARE_TEXT:
+            return code
+    return "en"
+
+
 @app.get("/s/{token}", response_class=HTMLResponse)
-def public_share(token: str):
+def public_share(token: str, request: Request):
     s, a = _valid_share(token)
+    lang = _share_lang(request)
+    text = SHARE_TEXT[lang]
     can_dl = s["permission"] == "download"
-    dl = (f'<a class="btn" href="/s/{token}/file">Download original</a>' if can_dl else "")
+    dl = (f'<a class="btn" href="/s/{token}/file">{text["download"]}</a>' if can_dl else "")
     # Titles and descriptions are user input: escape everything from the catalog.
     title = html.escape(a["title"] or a["filename"] or "")
     alt = html.escape(a.get("alt_text") or a["title"] or "")
     desc = html.escape(a.get("description") or "")
-    return f"""<!doctype html><html><head><meta charset="utf-8">
+    return f"""<!doctype html><html lang="{lang}"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} - Shared via Keepstack</title>
+<title>{title} - {text["shared"]}</title>
 <style>body{{margin:0;font-family:system-ui,sans-serif;background:#f4f6fa;color:#1d2433;
 display:flex;flex-direction:column;align-items:center;gap:24px;padding:48px 16px}}
 img{{max-width:min(900px,92vw);border-radius:12px;border:1px solid #dde3ec}}
@@ -761,7 +813,7 @@ img{{max-width:min(900px,92vw);border-radius:12px;border:1px solid #dde3ec}}
 <body><h2>{title}</h2>
 <img src="/s/{token}/preview" alt="{alt}">
 <p class="muted">{desc}</p>{dl}
-<p class="muted">Shared securely via Keepstack</p></body></html>"""
+<p class="muted">{text["footer"]}</p></body></html>"""
 
 
 @app.get("/s/{token}/preview")
@@ -1061,7 +1113,7 @@ def healthz():
 # ---------------------------------------------------------------------------
 # Static SPA (registered last so API routes win)
 # ---------------------------------------------------------------------------
-SPA_VIEWS = ("library", "collections", "dashboard", "users", "audit")
+SPA_VIEWS = ("library", "collections", "tags", "dashboard", "users", "audit")
 
 
 def spa_view():

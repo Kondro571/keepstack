@@ -13,7 +13,7 @@ import json
 import uuid as uuidlib
 from typing import BinaryIO, Optional
 
-from . import ai, metadata, ocr, search, storage, thumbnails
+from . import ai, metadata, ocr, search, storage, thumbnails, vocab
 from .audit import now_iso
 from .config import config
 from .db import get_conn, transaction
@@ -21,11 +21,10 @@ from .db import get_conn, transaction
 
 def _set_tags(conn, asset_id: int, tags: list[tuple[str, float]], source: str) -> None:
     for name, confidence in tags:
-        name = name.strip().lower()
-        if not name:
+        # a label like "pies" lands on the existing tag it translates ("dog")
+        tag_id = vocab.ensure_tag(conn, name)
+        if tag_id is None:
             continue
-        conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (name,))
-        tag_id = conn.execute("SELECT id FROM tags WHERE name = ?", (name,)).fetchone()["id"]
         conn.execute(
             "INSERT OR IGNORE INTO asset_tags (asset_id, tag_id, source, confidence) VALUES (?, ?, ?, ?)",
             (asset_id, tag_id, source, confidence),

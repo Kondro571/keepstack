@@ -1,12 +1,13 @@
 // Users view (admin): list, add, edit, change role, activate/deactivate, delete.
 import { $, $$, api, errorMessage, esc, state, toast } from "./core.js";
 import { registerView } from "./router.js";
+import { roleDesc, roleLabel as roleName, t } from "./i18n.js";
 
 let roles = [];       // [{name, label, description, offered}] from the server
 let users = [];
 let editing = null;   // user being edited, or null when adding
 
-const roleLabel = (name) => roles.find(r => r.name === name)?.label || name;
+const roleLabel = (name) => roleName(name, roles.find(r => r.name === name)?.label);
 // Offered roles, plus the user's current role if it is a legacy one (e.g. editor).
 const rolesFor = (current) => roles.filter(r => r.offered || r.name === current);
 
@@ -20,40 +21,40 @@ registerView("users", loadUsers);
 function renderUsers() {
   $("#user-rows").innerHTML = users.map(u => {
     const self = u.id === state.user.id;
-    const roleSelect = `<select class="role-select" data-id="${u.id}" ${self ? "disabled title=\"You cannot change your own role\"" : ""}>
-      ${rolesFor(u.role).map(r => `<option value="${r.name}" ${r.name === u.role ? "selected" : ""}>${esc(r.label)}</option>`).join("")}
+    const roleSelect = `<select class="role-select" data-id="${u.id}" ${self ? `disabled title="${esc(t("users.ownRole"))}"` : ""}>
+      ${rolesFor(u.role).map(r => `<option value="${r.name}" ${r.name === u.role ? "selected" : ""}>${esc(roleLabel(r.name))}</option>`).join("")}
     </select>`;
     return `<tr>
-      <td><strong>${esc(u.username)}</strong>${self ? ' <span class="muted">(you)</span>' : ""}
+      <td><strong>${esc(u.username)}</strong>${self ? ` <span class="muted">${esc(t("users.you"))}</span>` : ""}
         ${u.full_name ? `<span class="sub">${esc(u.full_name)}</span>` : ""}</td>
       <td>${esc(u.email || "")}</td>
       <td>${roleSelect}</td>
-      <td><span class="status ${u.is_active ? "on" : "off"}">${u.is_active ? "Active" : "Disabled"}</span></td>
-      <td>${(u.last_login || "").slice(0, 16).replace("T", " ") || '<span class="muted">never</span>'}</td>
+      <td><span class="status ${u.is_active ? "on" : "off"}">${esc(t(u.is_active ? "users.active" : "users.disabled"))}</span></td>
+      <td>${(u.last_login || "").slice(0, 16).replace("T", " ") || `<span class="muted">${esc(t("users.never"))}</span>`}</td>
       <td class="actions">
-        <button class="btn btn-ghost" data-edit="${u.id}">Edit</button>
-        ${self ? "" : `<button class="btn btn-ghost" data-toggle="${u.id}">${u.is_active ? "Disable" : "Enable"}</button>
-        <button class="btn btn-danger" data-delete="${u.id}">Delete</button>`}
+        <button class="btn btn-ghost" data-edit="${u.id}">${esc(t("users.edit"))}</button>
+        ${self ? "" : `<button class="btn btn-ghost" data-toggle="${u.id}">${esc(t(u.is_active ? "users.disable" : "users.enable"))}</button>
+        <button class="btn btn-danger" data-delete="${u.id}">${esc(t("common.delete"))}</button>`}
       </td>
     </tr>`;
   }).join("");
 
   $$("#user-rows .role-select").forEach(sel => sel.addEventListener("change", async () => {
     const u = users.find(x => x.id === Number(sel.dataset.id));
-    await saveUser(u, { role: sel.value }, `${u.username} is now ${roleLabel(sel.value)}`);
+    await saveUser(u, { role: sel.value }, t("users.nowRole", { user: u.username, role: roleLabel(sel.value) }));
   }));
   $$("#user-rows [data-toggle]").forEach(b => b.addEventListener("click", async () => {
     const u = users.find(x => x.id === Number(b.dataset.toggle));
-    await saveUser(u, { is_active: !u.is_active }, `${u.username} ${u.is_active ? "disabled" : "enabled"}`);
+    await saveUser(u, { is_active: !u.is_active }, t(u.is_active ? "users.wasDisabled" : "users.wasEnabled", { user: u.username }));
   }));
   $$("#user-rows [data-edit]").forEach(b => b.addEventListener("click", () =>
     openUserForm(users.find(x => x.id === Number(b.dataset.edit)))));
   $$("#user-rows [data-delete]").forEach(b => b.addEventListener("click", async () => {
     const u = users.find(x => x.id === Number(b.dataset.delete));
-    if (!confirm(`Delete user "${u.username}"? This cannot be undone. Files they uploaded stay in the library.`)) return;
+    if (!confirm(t("users.confirmDelete", { user: u.username }))) return;
     try {
       await api("/api/users/" + u.id, { method: "DELETE" });
-      toast(`${u.username} deleted`); loadUsers();
+      toast(t("users.deleted", { user: u.username })); loadUsers();
     } catch (err) { toast(errorMessage(err), "err"); }
   }));
 }
@@ -78,19 +79,19 @@ document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !modal.c
 function openUserForm(user) {
   editing = user;
   const self = user?.id === state.user.id;
-  $("#uf-title").textContent = user ? `Edit ${user.username}` : "Add user";
-  $("#uf-submit").textContent = user ? "Save changes" : "Create user";
+  $("#uf-title").textContent = user ? t("users.editTitle", { user: user.username }) : t("users.add");
+  $("#uf-submit").textContent = t(user ? "asset.saveChanges" : "users.create");
   $("#uf-username").value = user?.username || "";
   $("#uf-username").disabled = !!user;  // the username is the sign-in identity
   $("#uf-full_name").value = user?.full_name || "";
   $("#uf-email").value = user?.email || "";
   $("#uf-password").value = "";
-  $("#uf-password-label").textContent = user ? "New password (leave empty to keep)" : "Password (min. 8 characters)";
+  $("#uf-password-label").textContent = t(user ? "users.fNewPassword" : "users.fPassword");
   const current = user?.role || "viewer";
   $("#uf-roles").innerHTML = rolesFor(current).map(r => `
     <label class="role-option">
       <input type="radio" name="uf-role" value="${r.name}" ${r.name === current ? "checked" : ""} ${self ? "disabled" : ""}>
-      <span><span class="name">${esc(r.label)}</span><span class="desc"><br>${esc(r.description)}</span></span>
+      <span><span class="name">${esc(roleLabel(r.name))}</span><span class="desc"><br>${esc(roleDesc(r.name, r.description))}</span></span>
     </label>`).join("");
   $("#uf-active").checked = user ? !!user.is_active : true;
   $("#uf-active").disabled = self;
@@ -114,17 +115,17 @@ $("#user-form").addEventListener("submit", async (e) => {
   if (!editing) body.username = $("#uf-username").value.trim();
   if (editing?.id === state.user.id) { delete body.role; delete body.is_active; }
 
-  const problem = !editing && body.username.length < 3 ? "Username must be at least 3 characters."
-    : !editing && !password ? "Password is required."
-    : password && password.length < 8 ? "Password must be at least 8 characters."
-    : !body.role && !(editing?.id === state.user.id) ? "Choose a role." : "";
+  const problem = !editing && body.username.length < 3 ? t("users.errUsername")
+    : !editing && !password ? t("users.errPassword")
+    : password && password.length < 8 ? t("users.errShort")
+    : !body.role && !(editing?.id === state.user.id) ? t("users.errRole") : "";
   if (problem) return showFormError(problem);
 
   $("#uf-submit").disabled = true;
   try {
     if (editing) await api("/api/users/" + editing.id, { method: "PATCH", json: body });
     else await api("/api/users", { json: body });
-    toast(editing ? "User updated" : `User ${body.username} created`);
+    toast(editing ? t("users.updated") : t("users.created", { user: body.username }));
     closeUserForm(); loadUsers();
   } catch (err) { showFormError(errorMessage(err)); }
   finally { $("#uf-submit").disabled = false; }

@@ -8,17 +8,22 @@
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%234d68d6'/><text x='16' y='23' font-size='20' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'>K</text></svg>">
 </head>
 <body>
+  <!-- Text is filled in by js/i18n.js from data-i18n keys; English is the fallback. -->
 
   <!-- Login -->
   <div id="login" class="login-wrap hidden">
     <form id="login-form" class="login-card">
       <div class="brand-mark">K</div>
       <h1>Keepstack</h1>
-      <p class="muted">Open digital asset management</p>
-      <label>Username<input id="login-user" autocomplete="username" value="admin"></label>
-      <label>Password<input id="login-pass" type="password" autocomplete="current-password" value="admin"></label>
-      <button class="btn btn-primary" type="submit">Sign in</button>
+      <p class="muted" data-i18n="login.tagline">Open digital asset management</p>
+      <label><span data-i18n="login.username">Username</span><input id="login-user" autocomplete="username" value="admin"></label>
+      <label><span data-i18n="login.password">Password</span><input id="login-pass" type="password" autocomplete="current-password" value="admin"></label>
+      <button class="btn btn-primary" type="submit" data-i18n="login.submit">Sign in</button>
       <p id="login-error" class="error hidden"></p>
+      <select class="lang-select login-lang" data-i18n-aria-label="lang.label" aria-label="Language">
+        <option value="en">English</option>
+        <option value="pl">Polski</option>
+      </select>
     </form>
   </div>
 
@@ -30,17 +35,21 @@
         <strong>Keepstack</strong>
       </div>
       <div class="search-box">
-        <input id="search" placeholder="Search assets, tags, metadata...">
-        <select id="search-mode" title="Search mode">
-          <option value="keyword">Keyword</option>
-          <option value="semantic">Semantic</option>
+        <input id="search" placeholder="Search assets, tags, metadata..." data-i18n-placeholder="search.placeholder">
+        <select id="search-mode" title="Search mode" data-i18n-title="search.mode">
+          <option value="keyword" data-i18n="search.keyword">Keyword</option>
+          <option value="semantic" data-i18n="search.semantic">Semantic</option>
         </select>
       </div>
       <div class="topbar-right">
-        <button id="btn-upload" class="btn btn-primary">Upload</button>
+        <button id="btn-upload" class="btn btn-primary" data-i18n="nav.upload">Upload</button>
         <div class="user-menu">
           <span id="user-label" class="muted"></span>
-          <button id="btn-logout" class="btn btn-ghost">Sign out</button>
+          <select class="lang-select" title="Language" data-i18n-title="lang.label" data-i18n-aria-label="lang.label" aria-label="Language">
+            <option value="en">EN</option>
+            <option value="pl">PL</option>
+          </select>
+          <button id="btn-logout" class="btn btn-ghost" data-i18n="nav.signout">Sign out</button>
         </div>
       </div>
     </header>
@@ -48,20 +57,21 @@
     <div class="layout">
       <aside class="sidebar">
         <nav class="nav">
-          <a class="nav-item active" href="/library" data-view="library">Library</a>
-          <a class="nav-item" href="/collections" data-view="collections">Collections</a>
-          <a class="nav-item admin-only" href="/dashboard" data-view="dashboard">Dashboard</a>
-          <a class="nav-item admin-only" href="/users" data-view="users">Users</a>
-          <a class="nav-item admin-only" href="/audit" data-view="audit">Audit log</a>
+          <a class="nav-item active" href="/library" data-view="library" data-i18n="nav.library">Library</a>
+          <a class="nav-item" href="/collections" data-view="collections" data-i18n="nav.collections">Collections</a>
+          <a class="nav-item contrib-only" href="/tags" data-view="tags" data-i18n="nav.tags">Tags</a>
+          <a class="nav-item admin-only" href="/dashboard" data-view="dashboard" data-i18n="nav.dashboard">Dashboard</a>
+          <a class="nav-item admin-only" href="/users" data-view="users" data-i18n="nav.users">Users</a>
+          <a class="nav-item admin-only" href="/audit" data-view="audit" data-i18n="nav.audit">Audit log</a>
         </nav>
 
         <div id="facets" class="facets">
           <details class="facet-group" data-group="media" open>
-            <summary>Media type</summary>
+            <summary data-i18n="facets.media">Media type</summary>
             <ul id="facet-media"></ul>
           </details>
           <details class="facet-group" data-group="tags" open>
-            <summary>Top tags</summary>
+            <summary data-i18n="facets.tags">Top tags</summary>
             <ul id="facet-tags"></ul>
           </details>
         </div>
@@ -73,29 +83,29 @@
             <h2 id="result-title">Library</h2>
             <div class="view-controls">
               <button type="button" id="btn-tag-filter" class="btn btn-ghost" aria-expanded="false" aria-controls="tag-filter">
-                Filter tags <span id="tag-filter-count" class="count-badge hidden"></span>
+                <span data-i18n="tf.button">Filter tags</span> <span id="tag-filter-count" class="count-badge hidden"></span>
               </button>
-              <label class="check select-page hidden" title="Select every file on this page">
-                <input type="checkbox" id="select-page"> Select page
+              <label class="check select-page hidden" title="Select every file on this page" data-i18n-title="library.selectPageTitle">
+                <input type="checkbox" id="select-page"> <span data-i18n="library.selectPage">Select page</span>
               </label>
-              <div class="view-toggle" role="group" aria-label="Layout">
-                <button type="button" class="btn btn-ghost" data-layout="grid" title="Grid" aria-label="Grid view">&#9638;</button>
-                <button type="button" class="btn btn-ghost" data-layout="list" title="List" aria-label="List view">&#9776;</button>
+              <div class="view-toggle" role="group" aria-label="Layout" data-i18n-aria-label="library.layout">
+                <button type="button" class="btn btn-ghost" data-layout="grid" title="Grid view" aria-label="Grid view" data-i18n-title="library.grid" data-i18n-aria-label="library.grid">&#9638;</button>
+                <button type="button" class="btn btn-ghost" data-layout="list" title="List view" aria-label="List view" data-i18n-title="library.list" data-i18n-aria-label="library.list">&#9776;</button>
               </div>
-              <select id="sort" title="Sort">
-                <option value="relevance">Best match</option>
-                <option value="newest">Newest</option>
-                <option value="oldest">Oldest</option>
-                <option value="name">Name A-Z</option>
-                <option value="name_desc">Name Z-A</option>
-                <option value="largest">Largest file</option>
-                <option value="smallest">Smallest file</option>
-                <option value="type">Type A-Z</option>
-                <option value="type_desc">Type Z-A</option>
-                <option value="dims_desc">Largest dimensions</option>
-                <option value="dims">Smallest dimensions</option>
+              <select id="sort" title="Sort" data-i18n-title="sort.label">
+                <option value="relevance" data-i18n="sort.relevance">Best match</option>
+                <option value="newest" data-i18n="sort.newest">Newest</option>
+                <option value="oldest" data-i18n="sort.oldest">Oldest</option>
+                <option value="name" data-i18n="sort.name">Name A-Z</option>
+                <option value="name_desc" data-i18n="sort.name_desc">Name Z-A</option>
+                <option value="largest" data-i18n="sort.largest">Largest file</option>
+                <option value="smallest" data-i18n="sort.smallest">Smallest file</option>
+                <option value="type" data-i18n="sort.type">Type A-Z</option>
+                <option value="type_desc" data-i18n="sort.type_desc">Type Z-A</option>
+                <option value="dims_desc" data-i18n="sort.dims_desc">Largest dimensions</option>
+                <option value="dims" data-i18n="sort.dims">Smallest dimensions</option>
               </select>
-              <select id="page-size" title="Items per page">
+              <select id="page-size" title="Items per page" data-i18n-title="library.perPage">
                 <option value="10">10 per page</option>
                 <option value="50" selected>50 per page</option>
                 <option value="100">100 per page</option>
@@ -103,84 +113,109 @@
               </select>
             </div>
           </div>
-          <div id="active-filters" class="active-filters" aria-label="Active filters"></div>
+          <div id="active-filters" class="active-filters" aria-label="Active filters" data-i18n-aria-label="filters.active"></div>
           <!-- tag filter: pick tags that must / must not be on a file, then Filter -->
-          <div id="tag-filter" class="tag-filter panel hidden" role="region" aria-label="Filter by tags">
+          <div id="tag-filter" class="tag-filter panel hidden" role="region" aria-label="Filter by tags" data-i18n-aria-label="tf.region">
             <div class="tf-head">
-              <input id="tf-search" type="search" placeholder="Find a tag..." autocomplete="off" aria-label="Find a tag">
-              <label class="muted">Files must have
+              <input id="tf-search" type="search" placeholder="Find a tag..." autocomplete="off" aria-label="Find a tag"
+                     data-i18n-placeholder="tf.find" data-i18n-aria-label="tf.find">
+              <label class="muted"><span data-i18n="tf.mustHave">Files must have</span>
                 <select id="tf-match">
-                  <option value="all">all of the &#10003; tags</option>
-                  <option value="any">any of the &#10003; tags</option>
+                  <option value="all" data-i18n="tf.all">all of the &#10003; tags</option>
+                  <option value="any" data-i18n="tf.any">any of the &#10003; tags</option>
                 </select>
               </label>
             </div>
-            <p class="muted tf-legend"><span class="tf-key in">&#10003;</span> must have &nbsp; <span class="tf-key out">&#10005;</span> must not have</p>
+            <p class="muted tf-legend"><span class="tf-key in">&#10003;</span> <span data-i18n="tf.legendIn">must have</span> &nbsp; <span class="tf-key out">&#10005;</span> <span data-i18n="tf.legendOut">must not have</span></p>
             <ul id="tf-list" class="tf-list"></ul>
             <div class="tf-actions">
               <span id="tf-summary" class="muted"></span>
               <span class="spacer"></span>
-              <button type="button" id="tf-reset" class="btn btn-ghost">Clear</button>
-              <button type="button" id="tf-apply" class="btn btn-primary">Filter</button>
+              <button type="button" id="tf-reset" class="btn btn-ghost" data-i18n="tf.clear">Clear</button>
+              <button type="button" id="tf-apply" class="btn btn-primary" data-i18n="tf.apply">Filter</button>
             </div>
           </div>
           <div id="grid" class="grid"></div>
-          <nav id="pager" class="pager hidden" aria-label="Pages"></nav>
-          <div id="empty" class="empty hidden">No assets yet. Click Upload to get started.</div>
+          <nav id="pager" class="pager hidden" aria-label="Pages" data-i18n-aria-label="pager.label"></nav>
+          <div id="empty" class="empty hidden" data-i18n="library.empty">No assets yet. Click Upload to get started.</div>
 
           <!-- appears while files are selected -->
-          <div id="bulk-bar" class="bulk-bar hidden" role="region" aria-label="Bulk actions">
+          <div id="bulk-bar" class="bulk-bar hidden" role="region" aria-label="Bulk actions" data-i18n-aria-label="bulk.region">
             <strong id="bulk-count"></strong>
-            <button type="button" id="bulk-clear" class="btn btn-ghost">Clear</button>
+            <button type="button" id="bulk-clear" class="btn btn-ghost" data-i18n="bulk.clear">Clear</button>
             <span class="spacer"></span>
             <form id="bulk-tag-form" class="bulk-group">
-              <input id="bulk-tag" placeholder="Tag name" maxlength="100" autocomplete="off">
-              <button type="submit" class="btn">Add tag</button>
-              <button type="button" id="bulk-untag" class="btn btn-ghost">Remove tag</button>
+              <input id="bulk-tag" placeholder="Tag name" maxlength="100" autocomplete="off" data-i18n-placeholder="bulk.tagName">
+              <button type="submit" class="btn" data-i18n="bulk.addTag">Add tag</button>
+              <button type="button" id="bulk-untag" class="btn btn-ghost" data-i18n="bulk.removeTag">Remove tag</button>
             </form>
-            <select id="bulk-collection" class="bulk-group" aria-label="Add to collection"></select>
-            <button type="button" id="bulk-delete" class="btn btn-danger">Delete</button>
+            <select id="bulk-collection" class="bulk-group" aria-label="Add to collection" data-i18n-aria-label="bulk.toCollection"></select>
+            <button type="button" id="bulk-delete" class="btn btn-danger" data-i18n="bulk.delete">Delete</button>
           </div>
         </div>
 
         <div id="view-collections" class="view hidden">
           <div class="view-head">
-            <h2>Collections</h2>
-            <button id="btn-new-collection" class="btn">New collection</button>
+            <h2 data-i18n="nav.collections">Collections</h2>
+            <button id="btn-new-collection" class="btn" data-i18n="collections.new">New collection</button>
           </div>
-          <div id="collection-list" class="collection-list"></div>        </div>
+          <div id="collection-list" class="collection-list"></div>
+        </div>
+
+        <div id="view-tags" class="view hidden">
+          <div class="view-head">
+            <h2 data-i18n="nav.tags">Tags</h2>
+            <div class="view-controls">
+              <input id="tv-search" type="search" class="tv-search" autocomplete="off"
+                     data-i18n-placeholder="tv.search" data-i18n-aria-label="tv.search">
+              <label class="check"><input type="checkbox" id="tv-missing"> <span data-i18n="tv.missing">Only without a label in my language</span></label>
+            </div>
+          </div>
+          <p class="muted tv-help" data-i18n="tv.help"></p>
+          <table class="table tag-vocab">
+            <thead><tr id="tv-head"></tr></thead>
+            <tbody id="tv-rows"></tbody>
+          </table>
+          <nav id="tv-pager" class="pager hidden" aria-label="Pages" data-i18n-aria-label="pager.label"></nav>
+        </div>
 
         <div id="view-dashboard" class="view hidden">
-          <div class="view-head"><h2>Dashboard</h2></div>
+          <div class="view-head"><h2 data-i18n="nav.dashboard">Dashboard</h2></div>
           <div id="stat-cards" class="stat-cards"></div>
           <div class="panel">
-            <h3>Settings</h3>
+            <h3 data-i18n="dash.settings">Settings</h3>
             <form id="settings-form" class="settings-form">
-              <label for="set-upload-gb">Maximum upload size</label>
+              <label for="set-upload-gb" data-i18n="dash.uploadLimit">Maximum upload size</label>
               <div class="settings-row">
-                <input id="set-upload-gb" type="number" min="0.01" max="100" step="0.01" required> <span class="muted">GB per file</span>
-                <button class="btn" type="submit">Save</button>
+                <input id="set-upload-gb" type="number" min="0.01" max="100" step="0.01" required> <span class="muted" data-i18n="dash.perFile">GB per file</span>
+                <button class="btn" type="submit" data-i18n="common.save">Save</button>
               </div>
-              <p class="muted">Larger files are refused before they are uploaded. Applies to new uploads and new versions.</p>
+              <p class="muted" data-i18n="dash.uploadLimitHelp">Larger files are refused before they are uploaded. Applies to new uploads and new versions.</p>
             </form>
           </div>
           <div class="panel">
-            <h3>Integrity</h3>
-            <p class="muted">Re-hash every stored blob against its recorded SHA-256 (digital preservation fixity check).</p>
-            <button id="btn-fixity" class="btn">Run fixity check</button>
+            <h3 data-i18n="dash.integrity">Integrity</h3>
+            <p class="muted" data-i18n="dash.integrityHelp">Re-hash every stored blob against its recorded SHA-256 (digital preservation fixity check).</p>
+            <button id="btn-fixity" class="btn" data-i18n="dash.runFixity">Run fixity check</button>
             <div id="fixity-result" class="muted"></div>
           </div>
         </div>
 
         <div id="view-users" class="view hidden">
-          <div class="view-head"><h2>Users</h2><button id="btn-new-user" class="btn">Add user</button></div>
-          <table class="table users-table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
+          <div class="view-head"><h2 data-i18n="nav.users">Users</h2><button id="btn-new-user" class="btn" data-i18n="users.add">Add user</button></div>
+          <table class="table users-table"><thead><tr>
+            <th data-i18n="users.user">User</th><th data-i18n="users.email">Email</th><th data-i18n="users.role">Role</th>
+            <th data-i18n="users.status">Status</th><th data-i18n="users.lastLogin">Last login</th><th></th>
+          </tr></thead>
             <tbody id="user-rows"></tbody></table>
         </div>
 
         <div id="view-audit" class="view hidden">
-          <div class="view-head"><h2>Audit log</h2></div>
-          <table class="table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Target</th><th>Detail</th><th>IP</th></tr></thead>
+          <div class="view-head"><h2 data-i18n="nav.audit">Audit log</h2></div>
+          <table class="table"><thead><tr>
+            <th data-i18n="audit.time">Time</th><th data-i18n="audit.user">User</th><th data-i18n="audit.action">Action</th>
+            <th data-i18n="audit.target">Target</th><th data-i18n="audit.detail">Detail</th><th data-i18n="audit.ip">IP</th>
+          </tr></thead>
             <tbody id="audit-rows"></tbody></table>
         </div>
       </main>
@@ -191,7 +226,7 @@
   <div id="drawer" class="drawer hidden">
     <div class="drawer-backdrop"></div>
     <div class="drawer-panel">
-      <button id="drawer-close" class="drawer-close">&times;</button>
+      <button id="drawer-close" class="drawer-close" aria-label="Close" data-i18n-aria-label="common.close">&times;</button>
       <div id="drawer-body"></div>
     </div>
   </div>
@@ -200,27 +235,27 @@
   <div id="upload-modal" class="modal hidden">
     <div class="modal-backdrop"></div>
     <div class="modal-card">
-      <h3>Upload assets</h3>
+      <h3 data-i18n="upload.title">Upload assets</h3>
       <div class="modal-body">
         <div id="dropzone" class="dropzone">
-          <p>Drag files here or click to browse</p>
+          <p data-i18n="upload.drop">Drag files here or click to browse</p>
           <input id="file-input" type="file" multiple hidden>
         </div>
-        <label class="check"><input type="checkbox" id="ai-toggle" checked> Run AI enrichment (tags, alt-text)</label>
+        <label class="check"><input type="checkbox" id="ai-toggle" checked> <span data-i18n="upload.ai">Run AI enrichment (tags, alt-text)</span></label>
         <p id="upload-summary" class="muted upload-summary hidden"></p>
         <div id="upload-list" class="upload-list"></div>
         <div class="tag-import">
-          <h4>Import tags</h4>
-          <p class="muted">CSV, XLSX or XML. First column: file name (e.g. <code>logo.ai</code>) or UUID; next columns: tags. Several tags in one cell can be separated with <code>;</code> or <code>,</code>.</p>
+          <h4 data-i18n="tagimport.title">Import tags</h4>
+          <p class="muted" data-i18n-html="tagimport.help">CSV, XLSX or XML. First column: file name (e.g. <code>logo.ai</code>) or UUID; next columns: tags. Several tags in one cell can be separated with <code>;</code> or <code>,</code>.</p>
           <div id="tag-dropzone" class="dropzone dropzone-small" role="button" tabindex="0">
-            <p>Drag a CSV, XLSX or XML file here or click to choose</p>
+            <p data-i18n="tagimport.drop">Drag a CSV, XLSX or XML file here or click to choose</p>
             <input id="tag-import-input" type="file" accept=".csv,.xlsx,.xml" multiple hidden>
           </div>
           <div id="tag-import-result" class="upload-list"></div>
         </div>
       </div>
       <div class="modal-actions">
-        <button id="upload-cancel" class="btn btn-ghost">Close</button>
+        <button id="upload-cancel" class="btn btn-ghost" data-i18n="common.close">Close</button>
       </div>
     </div>
   </div>
@@ -232,20 +267,20 @@
       <h3 id="uf-title">Add user</h3>
       <div class="modal-body">
       <div class="form-grid">
-        <label>Username<input id="uf-username" autocomplete="off" maxlength="64"></label>
-        <label>Full name<input id="uf-full_name" autocomplete="off" maxlength="200"></label>
-        <label>Email<input id="uf-email" type="email" autocomplete="off"></label>
+        <label><span data-i18n="users.fUsername">Username</span><input id="uf-username" autocomplete="off" maxlength="64"></label>
+        <label><span data-i18n="users.fFullName">Full name</span><input id="uf-full_name" autocomplete="off" maxlength="200"></label>
+        <label><span data-i18n="users.fEmail">Email</span><input id="uf-email" type="email" autocomplete="off"></label>
         <label><span id="uf-password-label">Password</span><input id="uf-password" type="password" autocomplete="new-password"></label>
       </div>
       <fieldset class="role-picker">
-        <legend>Role</legend>
+        <legend data-i18n="users.role">Role</legend>
         <div id="uf-roles"></div>
       </fieldset>
-      <label class="check"><input type="checkbox" id="uf-active" checked> Active (can sign in)</label>
+      <label class="check"><input type="checkbox" id="uf-active" checked> <span data-i18n="users.fActive">Active (can sign in)</span></label>
       <p id="uf-error" class="error hidden"></p>
       </div>
       <div class="modal-actions">
-        <button type="button" id="uf-cancel" class="btn btn-ghost">Cancel</button>
+        <button type="button" id="uf-cancel" class="btn btn-ghost" data-i18n="common.cancel">Cancel</button>
         <button type="submit" id="uf-submit" class="btn btn-primary">Create user</button>
       </div>
     </form>

@@ -681,7 +681,9 @@ def test_share_page_escapes_and_links_belong_to_their_creator():
     with pytest.raises(HTTPException):
         create_share(_req(), {"target_id": aid, "permission": "admin"}, alice)
     tok = create_share(_req(), {"target_id": aid, "permission": "download"}, alice)["token"]
-    page = public_share(tok)
+    page = public_share(tok, _http())
+    assert "Download original" in page
+    assert "Pobierz oryginał" in public_share(tok, _http(headers={"accept-language": "pl-PL,pl;q=0.9,en;q=0.8"}))
     assert "<img src=x" not in page and "<script>" not in page and "&lt;img src=x" in page
 
     sid = next(s["id"] for s in list_shares(alice)["shares"] if s["token"] == tok)
@@ -694,7 +696,7 @@ def test_share_page_escapes_and_links_belong_to_their_creator():
     with get_conn() as conn:                                 # deleting the asset kills the link
         conn.execute("UPDATE assets SET status = 'deleted' WHERE id = ?", (aid,))
     with pytest.raises(HTTPException) as e:
-        public_share(tok)
+        public_share(tok, _http())
     assert e.value.status_code == 404
     revoke_share(sid, _req(), alice)
 
@@ -744,3 +746,59 @@ def test_tag_filters_include_exclude_and_list_sorts():
     assert set(order("type")) == {a["uuid"], b["uuid"], c["uuid"]}
     # an explicit sort applies to full-text results too; "relevance" ranks them
     assert len(search.search(q="tf", sort="name")["items"]) == len(search.search(q="tf")["items"])
+
+
+def test_tag_translations_search_resolve_and_conflicts():
+    from fastapi import HTTPException
+    from keepstack import vocab
+    from keepstack.app import (_startup, add_tag, bulk_assets, set_tag_translation, tag_labels,
+                               tag_vocabulary)
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+    a = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(7, 70, 140))), "vocab-a.jpg")
+    b = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(140, 70, 7))), "vocab-b.jpg")
+    add_tag(a["uuid"], _req(), {"name": "vocabdog"}, admin)
+    tid = get_conn().execute("SELECT id FROM tags WHERE name = 'vocabdog'").fetchone()["id"]
+
+    assert set_tag_translation(tid, "pl", _req(), {"label": " VocabPies "}, admin)["label"] == "vocabpies"
+    assert tag_labels("pl", admin)["labels"]["vocabdog"] == "vocabpies"
+    assert "vocabdog" not in tag_labels("en", admin)["labels"]
+
+    # searching the label (or its prefix) finds the tag's files; nothing was reindexed
+    found = lambda q: {i["uuid"] for i in search.search(q=q, limit=50)["items"]}
+    assert a["uuid"] in found("vocabpies") and a["uuid"] in found("vocabpi")
+    assert a["uuid"] in found("vocabdog")
+    assert search.search(tags=["vocabpies"])["total"] == search.search(tags=["vocabdog"])["total"] >= 1
+
+    # typing the label tags with the existing tag instead of creating "vocabpies"
+    add_tag(b["uuid"], _req(), {"name": "VocabPies"}, admin)
+    bulk_assets(_req(), {"action": "tag", "tag": "vocabpies", "uuids": [a["uuid"], b["uuid"]]}, admin)
+    assert not get_conn().execute("SELECT 1 FROM tags WHERE name = 'vocabpies'").fetchone()
+    assert search.search(tags=["vocabdog"])["total"] == 2
+    bulk_assets(_req(), {"action": "untag", "tag": "vocabpies", "uuids": [b["uuid"]]}, admin)
+    assert search.search(tags=["vocabdog"])["total"] == 1
+    b_id = get_conn().execute("SELECT id FROM assets WHERE uuid = ?", (b["uuid"],)).fetchone()["id"]
+    ingest._set_tags(get_conn(), b_id, [("vocabpies", 1.0)], "import")   # tag import / AI path
+    assert not get_conn().execute("SELECT 1 FROM tags WHERE name = 'vocabpies'").fetchone()
+
+    # a label must not clash with another tag's name or label
+    add_tag(b["uuid"], _req(), {"name": "vocabcat"}, admin)
+    cat = get_conn().execute("SELECT id FROM tags WHERE name = 'vocabcat'").fetchone()["id"]
+    for clash in ("vocabdog", "vocabpies"):
+        with pytest.raises(HTTPException) as e:
+            set_tag_translation(cat, "pl", _req(), {"label": clash}, admin)
+        assert e.value.status_code == 409
+    with pytest.raises(HTTPException):
+        set_tag_translation(cat, "de", _req(), {"label": "katze"}, admin)
+    set_tag_translation(cat, "en", _req(), {"label": "vocabkitty"}, admin)
+
+    v = tag_vocabulary(q="vocab", missing=None, limit=100, offset=0, user=admin)
+    by_name = {i["name"]: i for i in v["items"]}
+    assert by_name["vocabdog"]["translations"]["pl"]["label"] == "vocabpies"
+    assert by_name["vocabdog"]["count"] == 2
+    assert {i["name"] for i in tag_vocabulary(q="vocabpi", missing=None, limit=100, offset=0, user=admin)["items"]} == {"vocabdog"}
+    assert "vocabdog" not in {i["name"] for i in tag_vocabulary(q="vocab", missing="pl", limit=100, offset=0, user=admin)["items"]}
+
+    # an empty label removes the translation
+    assert set_tag_translation(tid, "pl", _req(), {"label": ""}, admin)["label"] is None
+    assert vocab.expand_term("vocabpies") == []

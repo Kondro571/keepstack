@@ -1,4 +1,5 @@
 /* Shared helpers and state for the Keepstack client. Vanilla JS, no build step. */
+import { lang, t, tServer } from "./i18n.js";
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 export const state = { user: null, settings: { max_upload_mb: null },
@@ -24,7 +25,7 @@ export function toast(msg, kind = "ok") {
   const t = $("#toast"); t.textContent = msg; t.className = "toast " + kind;
   setTimeout(() => t.classList.add("hidden"), 2600);
 }
-export const fmtBytes = (b) => { if (!b) return "0 B"; const u = ["B","KB","MB","GB","TB"]; const i = Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(i?1:0)+" "+u[i]; };
+export const fmtBytes = (b) => { if (!b) return "0 B"; const u = ["B","KB","MB","GB","TB"]; const i = Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toLocaleString(lang, { minimumFractionDigits: i?1:0, maximumFractionDigits: i?1:0 })+" "+u[i]; };
 export const esc = (s) => (s ?? "").toString().replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
 // Mirrors auth.ROLES on the server: each role includes the ones after it.
@@ -33,8 +34,8 @@ export const roleAtLeast = (min) =>
   state.user && ROLE_ORDER.indexOf(state.user.role) !== -1 && ROLE_ORDER.indexOf(state.user.role) <= ROLE_ORDER.indexOf(min);
 
 // The API returns errors as {"detail": "..."}; show that text when present.
-export function errorMessage(err, fallback = "Something went wrong") {
-  try { return JSON.parse(err.message).detail || fallback; } catch { return err.message || fallback; }
+export function errorMessage(err, fallback = t("common.error")) {
+  try { return tServer(JSON.parse(err.message).detail) || fallback; } catch { return err.message || fallback; }
 }
 
 // Plain left click; ctrl/shift/middle clicks are left to the browser (new tab).

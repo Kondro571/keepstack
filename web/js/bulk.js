@@ -3,6 +3,7 @@
 // it when the search or filters change, so actions never hit files the user
 // can no longer see in the result set.
 import { $, $$, api, errorMessage, esc, notifyCatalogChanged, roleAtLeast, toast } from "./core.js";
+import { t } from "./i18n.js";
 
 export const selected = new Set();
 let pageUuids = [];      // uuids on the current page, in display order
@@ -10,7 +11,7 @@ let anchor = null;       // last toggled uuid, for shift-click ranges
 let collections = [];
 
 export const canSelect = () => roleAtLeast("contributor");
-const plural = (n, word) => `${n} ${word}${n === 1 ? "" : "s"}`;
+const files = (n) => t("bulk.files", { n });
 
 export function setPage(uuids) { pageUuids = uuids; syncSelectionUi(); }
 
@@ -51,16 +52,16 @@ function renderBar(onPage) {
   bar.classList.toggle("hidden", !n);
   if (!n) return;
   const elsewhere = n - onPage;
-  $("#bulk-count").textContent = plural(n, "file") + " selected" + (elsewhere ? ` (${elsewhere} on other pages)` : "");
+  $("#bulk-count").textContent = t("bulk.selected", { n }) + (elsewhere ? " " + t("bulk.elsewhere", { n: elsewhere }) : "");
   $("#bulk-delete").classList.toggle("hidden", !roleAtLeast("editor"));
   if (wasHidden) loadCollectionOptions();  // pick up collections created meanwhile
 }
 
 async function loadCollectionOptions() {
   try { collections = (await api("/api/collections")).collections; } catch { collections = []; }
-  $("#bulk-collection").innerHTML = `<option value="">Add to collection...</option>` +
+  $("#bulk-collection").innerHTML = `<option value="">${esc(t("bulk.toCollection"))}</option>` +
     collections.map(c => `<option value="${c.id}">${esc(c.name)}</option>`).join("") +
-    `<option value="__new">+ New collection...</option>`;
+    `<option value="__new">${esc(t("bulk.newCollection"))}</option>`;
 }
 
 async function run(action, extra, describe) {
@@ -72,7 +73,7 @@ async function run(action, extra, describe) {
   } catch (err) { toast(errorMessage(err), "err"); }
 }
 
-const skipped = (r, why) => r.matched > r.changed ? ` (${r.matched - r.changed} ${why})` : "";
+const skipped = (r, key) => r.matched > r.changed ? " " + t(key, { n: r.matched - r.changed }) : "";
 
 $("#bulk-clear").addEventListener("click", clearSelection);
 $("#select-page").addEventListener("change", (e) => selectPage(e.target.checked));
@@ -81,12 +82,12 @@ $("#bulk-tag-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const tag = $("#bulk-tag").value.trim();
   if (!tag) return $("#bulk-tag").focus();
-  run("tag", { tag }, r => `Tag "${tag.toLowerCase()}" added to ${plural(r.changed, "file")}${skipped(r, "already had it")}`);
+  run("tag", { tag }, r => t("bulk.tagged", { tag: tag.toLowerCase(), files: files(r.changed) }) + skipped(r, "bulk.hadIt"));
 });
 $("#bulk-untag").addEventListener("click", () => {
   const tag = $("#bulk-tag").value.trim();
-  if (!tag) { toast("Type the tag to remove first", "err"); return $("#bulk-tag").focus(); }
-  run("untag", { tag }, r => `Tag "${tag.toLowerCase()}" removed from ${plural(r.changed, "file")}${skipped(r, "did not have it")}`);
+  if (!tag) { toast(t("bulk.typeTagFirst"), "err"); return $("#bulk-tag").focus(); }
+  run("untag", { tag }, r => t("bulk.untagged", { tag: tag.toLowerCase(), files: files(r.changed) }) + skipped(r, "bulk.lacked"));
 });
 
 $("#bulk-collection").addEventListener("change", async (e) => {
@@ -95,20 +96,25 @@ $("#bulk-collection").addEventListener("change", async (e) => {
   if (!id) return;
   let name = collections.find(c => String(c.id) === id)?.name;
   if (id === "__new") {
-    name = prompt("New collection name")?.trim();
+    name = prompt(t("bulk.newCollectionPrompt"))?.trim();
     if (!name) return;
     try { id = (await api("/api/collections", { json: { name } })).id; }
     catch (err) { return toast(errorMessage(err), "err"); }
     loadCollectionOptions();
   }
   run("collection", { collection_id: Number(id) },
-    r => `${plural(r.changed, "file")} added to "${name}"${skipped(r, "already there")}`);
+    r => t("bulk.collected", { files: files(r.changed), name }) + skipped(r, "bulk.alreadyThere"));
 });
 
 $("#bulk-delete").addEventListener("click", () => {
   const n = selected.size;
-  if (!confirm(`Delete ${plural(n, "file")}? They disappear from the library for everyone.`)) return;
-  run("delete", {}, r => `${plural(r.changed, "file")} deleted`);
+  if (!confirm(t("bulk.confirmDelete", { files: files(n) }))) return;
+  run("delete", {}, r => t("bulk.deleted", { files: files(r.changed) }));
+});
+
+document.addEventListener("keepstack:lang-changed", () => {
+  syncSelectionUi();
+  if (!$("#bulk-bar").classList.contains("hidden")) loadCollectionOptions();
 });
 
 // Esc clears the selection when no dialog or drawer is open. Capture phase, so

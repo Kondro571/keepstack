@@ -29,6 +29,21 @@ semantic versioning.
 
 ### Added
 
+- Tag translations: a tag keeps one name and can have a label per language
+  (`tag_translations`), edited in a new Tags view (contributor and up). The
+  interface shows the label for the current language; searching a label
+  (or its prefix) finds the tag's files, resolved at query time so nothing is
+  reindexed; and typing a label when tagging (drawer, bulk, import, AI)
+  attaches the existing tag instead of creating a duplicate. Labels may not
+  clash with another tag's name or label. API: `GET /api/tags/labels`,
+  `GET /api/tags/vocabulary`, `PUT /api/tags/{id}/translations/{lang}`.
+- Polish interface next to English, with a language switch in the top bar
+  and on the sign-in screen. The choice is saved per user (preferences) and
+  in the browser; the default follows the browser language. Translations live
+  in `web/js/i18n.js` (static markup uses `data-i18n` attributes), including
+  Polish plural forms and the API error messages the UI shows. The public
+  share page follows the visitor's `Accept-Language`. Tags, titles and other
+  catalog content are not translated.
 - Tag filter in the library: a "Filter tags" panel where each tag can be
   marked "must have" or "must not have" (with "all" or "any" of the wanted
   tags), applied with Filter. Active filters show as removable chips and live
@@ -116,6 +131,8 @@ semantic versioning.
   dragged onto their own drop zone, and a file dropped beside a drop zone no
   longer opens in the tab.
 
+- The tag list behind the "Filter tags" panel (`GET /api/tags`) took ~3 s on
+  a 100k-asset catalog; counts are now grouped once per tag (~0.14 s).
 - Filtering by tag or collection always returned nothing: the SQL parameters
   were bound in the wrong order.
 - Keyword search took ~40 s on a 100k-asset catalog because SQLite probed the

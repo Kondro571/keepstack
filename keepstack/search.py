@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Iterable, Optional
 
-from . import ai
+from . import ai, vocab
 from .db import get_conn
 
 # Each sort ends on the row id so pages are stable when values tie. Date, name,
@@ -64,9 +64,15 @@ def invalidate_facets() -> None:
 
 
 def _fts_query(q: str) -> str:
-    """Turn user text into a safe FTS5 prefix query."""
+    """Turn user text into a safe FTS5 prefix query. A term that starts a tag
+    label in any language also matches that tag's name, so "pies" finds
+    files tagged "dog" without the label being in the index."""
     terms = [t for t in "".join(c if c.isalnum() or c.isspace() else " " for c in q).split() if t]
-    return " ".join(f'"{t}"*' for t in terms)
+    parts = []
+    for t in terms:
+        alts = [f'"{t}"*'] + ['"' + name.replace('"', '""') + '"' for name in vocab.expand_term(t)]
+        parts.append(alts[0] if len(alts) == 1 else "(" + " OR ".join(alts) + ")")
+    return " ".join(parts)
 
 
 def search(
@@ -88,8 +94,9 @@ def search(
     ``tag_match="any"``) and ``not_tags`` must not; ``tag`` is one more
     required tag, kept for older callers."""
     conn = get_conn()
-    include = _clean_tags([*(tags or ()), *([tag] if tag else [])])
-    exclude = _clean_tags(not_tags)
+    # filters take tag names, or labels such as "pies" for "dog"
+    include = _clean_tags(vocab.resolve(conn, t) for t in [*(tags or ()), *([tag] if tag else [])])
+    exclude = _clean_tags(vocab.resolve(conn, t) for t in not_tags or ())
 
     # Semantic mode ranks the candidate pool by embedding similarity.
     if mode == "semantic" and q.strip():

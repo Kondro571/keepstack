@@ -42,6 +42,8 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture. The short version:
 | Auth, roles, or tokens | `keepstack/auth.py` |
 | API routes | `keepstack/app.py` |
 | The web UI | `web/index.html`, `web/styles.css`, `web/js/` (ES modules; `main.js` is the entry and lists the rest) |
+| UI text and translations | `web/js/i18n.js`: add every new string in English and Polish, use `t("key")` in scripts and `data-i18n="key"` in markup |
+| Tag names, labels and translations | `keepstack/vocab.py` (create tags through `vocab.ensure_tag` so labels resolve), `web/js/tags.js` (display) |
 | The database schema | `keepstack/db.py` |
 
 ## Adding a feature, the short path
