@@ -112,7 +112,7 @@
 
         <div id="view-users" class="view hidden">
           <div class="view-head"><h2>Users</h2><button id="btn-new-user" class="btn">Add user</button></div>
-          <table class="table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Active</th><th>Last login</th></tr></thead>
+          <table class="table users-table"><thead><tr><th>User</th><th>Email</th><th>Role</th><th>Status</th><th>Last login</th><th></th></tr></thead>
             <tbody id="user-rows"></tbody></table>
         </div>
 
@@ -156,6 +156,30 @@
         <button id="upload-cancel" class="btn btn-ghost">Close</button>
       </div>
     </div>
+  </div>
+
+  <!-- Add / edit user -->
+  <div id="user-modal" class="modal hidden">
+    <div class="modal-backdrop"></div>
+    <form id="user-form" class="modal-card user-form" novalidate>
+      <h3 id="uf-title">Add user</h3>
+      <div class="form-grid">
+        <label>Username<input id="uf-username" autocomplete="off" maxlength="64"></label>
+        <label>Full name<input id="uf-full_name" autocomplete="off" maxlength="200"></label>
+        <label>Email<input id="uf-email" type="email" autocomplete="off"></label>
+        <label><span id="uf-password-label">Password</span><input id="uf-password" type="password" autocomplete="new-password"></label>
+      </div>
+      <fieldset class="role-picker">
+        <legend>Role</legend>
+        <div id="uf-roles"></div>
+      </fieldset>
+      <label class="check"><input type="checkbox" id="uf-active" checked> Active (can sign in)</label>
+      <p id="uf-error" class="error hidden"></p>
+      <div class="modal-actions">
+        <button type="button" id="uf-cancel" class="btn btn-ghost">Cancel</button>
+        <button type="submit" id="uf-submit" class="btn btn-primary">Create user</button>
+      </div>
+    </form>
   </div>
 
   <div id="toast" class="toast hidden"></div>

@@ -180,6 +180,34 @@ button, input, select { font-family: inherit; font-size: inherit; }
   padding: var(--s2); border-radius: var(--radius-sm); resize: vertical;
 }
 .tag-row { display: flex; flex-wrap: wrap; gap: var(--s1); align-items: center; }
+
+/* ---------- users ---------- */
+.user-form { width: min(600px, 94vw); max-height: 92vh; overflow: auto; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--s2); }
+.form-grid label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.form-grid input {
+  background: var(--base-0); border: 1px solid var(--base-3); color: var(--text);
+  padding: var(--s2); border-radius: var(--radius-sm);
+}
+.form-grid input:disabled { color: var(--muted); }
+.role-picker { border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--s1); }
+.role-picker legend { font-size: 13px; color: var(--muted); margin-bottom: var(--s1); padding: 0; }
+.role-option {
+  display: flex; gap: var(--s2); align-items: flex-start; padding: var(--s2); cursor: pointer;
+  border: 1px solid var(--base-3); border-radius: var(--radius-sm); background: var(--base-0);
+}
+.role-option:has(input:checked) { border-color: var(--accent); background: var(--accent-dim); }
+.role-option input { margin-top: 3px; accent-color: var(--accent); }
+.role-option .name { font-weight: 600; }
+.role-option .desc { color: var(--muted); font-size: 13px; }
+.users-table td { vertical-align: middle; }
+.users-table .sub { display: block; color: var(--muted); font-size: 12px; }
+.users-table .actions { text-align: right; white-space: nowrap; }
+.users-table .actions .btn { padding: 4px var(--s1); }
+.status { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.status.on { color: var(--ok); background: rgba(23, 138, 94, 0.10); }
+.status.off { color: var(--muted); background: var(--base-2); }
+@media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
 .tag {
   display: inline-flex; align-items: center; gap: 6px; background: var(--base-2);
   border: 1px solid var(--base-3); border-radius: 999px; padding: 4px var(--s2); font-size: 13px;

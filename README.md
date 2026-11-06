@@ -159,9 +159,15 @@ See [ADR-0004](docs/decisions/ADR-0004-optional-offline-ai.md) for the design.
 | Role | Can do |
 |------|--------|
 | **viewer** | Browse, search, view, download |
-| **contributor** | Plus upload, edit metadata, tag, create collections and share links |
+| **uploader** | Plus upload new files (cannot edit or delete) |
+| **contributor** | Plus edit metadata, tag, import tags, create collections and share links |
 | **editor** | Plus delete assets and manage versions |
 | **admin** | Plus user management, audit log, custom fields, fixity checks |
+
+Admins manage users under **Users**: add, edit, change role, disable and
+delete. The add form offers Administrator, Uploader and Viewer; editor and
+contributor remain valid for existing accounts. The last active administrator
+cannot be demoted, disabled or deleted, and nobody can do that to themselves.
 
 The seed script also creates `curator` (editor), `contributor`, and `viewer`
 demo accounts, password `demo1234`.

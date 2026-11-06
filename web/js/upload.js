@@ -4,7 +4,7 @@ import { $, api, esc, notifyCatalogChanged } from "./core.js";
 const uploadModal = $("#upload-modal");
 $("#btn-upload").addEventListener("click", () => { uploadModal.classList.remove("hidden"); document.body.classList.add("modal-open"); });
 $("#upload-cancel").addEventListener("click", () => { uploadModal.classList.add("hidden"); document.body.classList.remove("modal-open"); notifyCatalogChanged(); });
-$(".modal-backdrop").addEventListener("click", () => { uploadModal.classList.add("hidden"); document.body.classList.remove("modal-open"); });
+$("#upload-modal .modal-backdrop").addEventListener("click", () => { uploadModal.classList.add("hidden"); document.body.classList.remove("modal-open"); });
 const dz = $("#dropzone"), fileInput = $("#file-input");
 dz.addEventListener("click", () => fileInput.click());
 dz.addEventListener("dragover", e => { e.preventDefault(); dz.classList.add("drag"); });

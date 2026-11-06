@@ -515,3 +515,61 @@ def test_facet_counts_refresh_after_catalog_change():
     ingest.ingest_stream(io.BytesIO(b"plain text body"), "facet-note.txt")
     after = {m["value"]: m["count"] for m in search.search()["facets"]["media_types"]}
     assert after.get("document", 0) == before.get("document", 0) + 1
+
+
+def _req():
+    import types
+    return types.SimpleNamespace(client=types.SimpleNamespace(host="127.0.0.1"), headers={})
+
+
+def test_uploader_role_sits_between_contributor_and_viewer():
+    assert role_at_least("uploader", "viewer")
+    assert role_at_least("contributor", "uploader")
+    assert not role_at_least("uploader", "contributor")
+
+
+def test_user_management_validates_and_protects_admins():
+    from fastapi import HTTPException
+    from keepstack.app import _startup, create_user, delete_user, update_user
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+
+    with pytest.raises(HTTPException) as e:
+        create_user(_req(), {"username": "x", "password": "longenough"}, admin)
+    assert e.value.status_code == 400                     # username too short
+    with pytest.raises(HTTPException):
+        create_user(_req(), {"username": "shortpw", "password": "123"}, admin)
+    with pytest.raises(HTTPException):
+        create_user(_req(), {"username": "badrole", "password": "longenough", "role": "root"}, admin)
+
+    up = create_user(_req(), {"username": "uploader1", "password": "longenough",
+                              "role": "uploader", "email": "u@example.org"}, admin)
+    assert up["role"] == "uploader" and up["is_active"] == 1
+    with pytest.raises(HTTPException) as e:
+        create_user(_req(), {"username": "uploader1", "password": "longenough"}, admin)
+    assert e.value.status_code == 409
+
+    assert update_user(up["id"], _req(), {"role": "viewer", "is_active": False}, admin)["role"] == "viewer"
+
+    # the acting admin cannot demote, deactivate or delete themselves
+    for change in ({"role": "viewer"}, {"is_active": False}):
+        with pytest.raises(HTTPException):
+            update_user(admin["id"], _req(), change, admin)
+    with pytest.raises(HTTPException):
+        delete_user(admin["id"], _req(), admin)
+
+    # a second admin can be demoted, but not the last remaining one
+    other = create_user(_req(), {"username": "admin2", "password": "longenough", "role": "admin"}, admin)
+    update_user(other["id"], _req(), {"role": "viewer"}, admin)
+    solo = {**other, "role": "admin"}  # pretend admin2 acts after admin1 is gone
+    get_conn().execute("UPDATE users SET role='admin' WHERE id=?", (other["id"],))
+    get_conn().execute("UPDATE users SET is_active=0 WHERE id=?", (admin["id"],))
+    try:
+        with pytest.raises(HTTPException):
+            update_user(other["id"], _req(), {"role": "viewer"}, {**solo, "id": -1})
+    finally:
+        get_conn().execute("UPDATE users SET is_active=1 WHERE id=?", (admin["id"],))
+        get_conn().commit()
+
+    delete_user(up["id"], _req(), admin)
+    assert get_conn().execute("SELECT 1 FROM users WHERE id=?", (up["id"],)).fetchone() is None

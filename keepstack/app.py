@@ -9,6 +9,8 @@ from __future__ import annotations
 import io
 import ipaddress
 import json
+import re
+import sqlite3
 from pathlib import Path
 from typing import Optional
 
@@ -20,9 +22,9 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__, ingest, search, standards, storage, tagimport, thumbnails
 from .audit import log, now_iso
-from .auth import (authenticate, hash_password, login_locked, make_token,
-                   note_login_failure, note_login_success, role_at_least,
-                   verify_password, verify_token)
+from .auth import (OFFERED_ROLES, ROLE_INFO, ROLES, authenticate, hash_password,
+                   login_locked, make_token, note_login_failure, note_login_success,
+                   role_at_least, verify_password, verify_token)
 from .config import config
 from .db import get_conn, init_db, transaction
 
@@ -606,42 +608,119 @@ def stats(user: dict = Depends(require_user)):
             "tags": tags, "collections": cols, "dedup_saved_bytes": dup}
 
 
+USERNAME_RE = re.compile(r"^[A-Za-z0-9._@-]{3,64}$")
+MIN_PASSWORD = 8
+_USER_COLS = "id, username, email, full_name, role, is_active, created_at, last_login"
+
+
+@app.get("/api/roles")
+def list_roles(user: dict = Depends(require_role("admin"))):
+    return {"roles": [{"name": r, "label": ROLE_INFO[r][0], "description": ROLE_INFO[r][1],
+                       "offered": r in OFFERED_ROLES} for r in ROLES]}
+
+
+def _clean_user_fields(body: dict) -> dict:
+    """Validate the editable user fields present in ``body``."""
+    out = {}
+    if "role" in body:
+        if body["role"] not in ROLES:
+            raise HTTPException(400, f"Unknown role: {body['role']}")
+        out["role"] = body["role"]
+    if "email" in body:
+        email = (body["email"] or "").strip()
+        if email and not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise HTTPException(400, "Invalid email address")
+        out["email"] = email or None
+    if "full_name" in body:
+        out["full_name"] = (body["full_name"] or "").strip()[:200] or None
+    if "is_active" in body:
+        out["is_active"] = 1 if body["is_active"] else 0
+    if body.get("password"):
+        if len(body["password"]) < MIN_PASSWORD:
+            raise HTTPException(400, f"Password must be at least {MIN_PASSWORD} characters")
+        out["password_hash"] = hash_password(body["password"])
+    return out
+
+
+def _guard_admins(conn, uid: int, acting: dict, *, role: Optional[str], active: bool) -> None:
+    """Refuse changes that would lock everyone out of administration."""
+    if uid == acting["id"] and (role != "admin" or not active):
+        raise HTTPException(400, "You cannot remove your own admin access or delete yourself")
+    if role == "admin" and active:
+        return
+    others = conn.execute(
+        "SELECT COUNT(*) c FROM users WHERE role = 'admin' AND is_active = 1 AND id != ?", (uid,)
+    ).fetchone()["c"]
+    if not others:
+        raise HTTPException(400, "At least one active administrator must remain")
+
+
+def _get_user_or_404(conn, uid: int) -> dict:
+    row = conn.execute(f"SELECT {_USER_COLS} FROM users WHERE id = ?", (uid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "User not found")
+    return dict(row)
+
+
 @app.get("/api/users")
 def list_users(user: dict = Depends(require_role("admin"))):
-    rows = get_conn().execute(
-        "SELECT id, username, email, full_name, role, is_active, created_at, last_login FROM users "
-        "ORDER BY username").fetchall()
+    rows = get_conn().execute(f"SELECT {_USER_COLS} FROM users ORDER BY username").fetchall()
     return {"users": [dict(r) for r in rows]}
 
 
 @app.post("/api/users")
 def create_user(request: Request, body: dict = Body(...), user: dict = Depends(require_role("admin"))):
+    username = (body.get("username") or "").strip()
+    if not USERNAME_RE.fullmatch(username):
+        raise HTTPException(400, "Username must be 3-64 characters: letters, digits, . _ @ -")
+    if not body.get("password"):
+        raise HTTPException(400, "Password is required")
+    fields = _clean_user_fields({"role": "viewer", "is_active": True, **body})
     try:
         with transaction() as conn:
             cur = conn.execute(
                 "INSERT INTO users (username, email, full_name, password_hash, role, is_active, created_at) "
-                "VALUES (?,?,?,?,?,1,?)",
-                (body["username"], body.get("email"), body.get("full_name"),
-                 hash_password(body["password"]), body.get("role", "viewer"), now_iso()))
-    except Exception:
+                "VALUES (?,?,?,?,?,?,?)",
+                (username, fields.get("email"), fields.get("full_name"), fields["password_hash"],
+                 fields["role"], fields["is_active"], now_iso()))
+    except sqlite3.IntegrityError:
         raise HTTPException(409, "Username already exists")
-    log("user.create", user=user, target_type="user", target_id=body["username"])
-    return {"id": cur.lastrowid}
+    log("user.create", user=user, target_type="user", target_id=username,
+        detail=f"role={fields['role']}", ip=client_ip(request))
+    return _get_user_or_404(get_conn(), cur.lastrowid)
 
 
 @app.patch("/api/users/{uid}")
-def update_user(uid: int, body: dict = Body(...), user: dict = Depends(require_role("admin"))):
-    sets, vals = [], []
-    for k in ("email", "full_name", "role", "is_active"):
-        if k in body:
-            sets.append(f"{k} = ?"); vals.append(body[k])
-    if body.get("password"):
-        sets.append("password_hash = ?"); vals.append(hash_password(body["password"]))
-    if sets:
-        vals.append(uid)
-        with transaction() as conn:
-            conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE id = ?", vals)
-    log("user.update", user=user, target_type="user", target_id=uid)
+def update_user(uid: int, request: Request, body: dict = Body(...),
+                user: dict = Depends(require_role("admin"))):
+    fields = _clean_user_fields(body)
+    with transaction() as conn:
+        current = _get_user_or_404(conn, uid)
+        new_role = fields.get("role", current["role"])
+        new_active = bool(fields.get("is_active", current["is_active"]))
+        if current["role"] == "admin" and current["is_active"]:
+            _guard_admins(conn, uid, user, role=new_role, active=new_active)
+        if fields:
+            conn.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                         [*fields.values(), uid])
+    changed = ", ".join(k if k != "password_hash" else "password" for k in fields)
+    log("user.update", user=user, target_type="user", target_id=current["username"],
+        detail=changed, ip=client_ip(request))
+    return _get_user_or_404(get_conn(), uid)
+
+
+@app.delete("/api/users/{uid}")
+def delete_user(uid: int, request: Request, user: dict = Depends(require_role("admin"))):
+    with transaction() as conn:
+        current = _get_user_or_404(conn, uid)
+        if uid == user["id"]:
+            raise HTTPException(400, "You cannot remove your own admin access or delete yourself")
+        if current["role"] == "admin" and current["is_active"]:
+            _guard_admins(conn, uid, user, role=None, active=False)
+        # Uploaded assets keep existing (uploaded_by becomes NULL); preferences go too.
+        conn.execute("DELETE FROM users WHERE id = ?", (uid,))
+    log("user.delete", user=user, target_type="user", target_id=current["username"],
+        ip=client_ip(request))
     return {"ok": True}
 
 

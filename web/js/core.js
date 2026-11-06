@@ -25,6 +25,16 @@ export function toast(msg, kind = "ok") {
 export const fmtBytes = (b) => { if (!b) return "0 B"; const u = ["B","KB","MB","GB","TB"]; const i = Math.floor(Math.log(b)/Math.log(1024)); return (b/Math.pow(1024,i)).toFixed(i?1:0)+" "+u[i]; };
 export const esc = (s) => (s ?? "").toString().replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
+// Mirrors auth.ROLES on the server: each role includes the ones after it.
+const ROLE_ORDER = ["admin", "editor", "contributor", "uploader", "viewer"];
+export const roleAtLeast = (min) =>
+  state.user && ROLE_ORDER.indexOf(state.user.role) !== -1 && ROLE_ORDER.indexOf(state.user.role) <= ROLE_ORDER.indexOf(min);
+
+// The API returns errors as {"detail": "..."}; show that text when present.
+export function errorMessage(err, fallback = "Something went wrong") {
+  try { return JSON.parse(err.message).detail || fallback; } catch { return err.message || fallback; }
+}
+
 // Plain left click; ctrl/shift/middle clicks are left to the browser (new tab).
 export const isPlainClick = (e) => e.button === 0 && !e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
 

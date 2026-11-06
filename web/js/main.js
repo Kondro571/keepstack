@@ -6,18 +6,20 @@
  *   asset.js        asset detail drawer
  *   upload.js       upload dialog and tag import
  *   collections.js  collections view
- *   admin.js        dashboard, users, audit log
+ *   admin.js        dashboard, audit log
+ *   users.js        user management (add, edit, roles, delete)
  *
  * Feature modules register their view with the router when imported; this
  * file handles sign-in and boot.
  */
-import { $, $$, api, setUnauthorizedHandler, state } from "./core.js";
+import { $, $$, api, roleAtLeast, setUnauthorizedHandler, state } from "./core.js";
 import { route } from "./router.js";
 import { loadPrefs } from "./library.js";
 import "./asset.js";
 import "./upload.js";
 import "./collections.js";
 import "./admin.js";
+import "./users.js";
 
 // ---------- auth ----------
 $("#login-form").addEventListener("submit", async (e) => {
@@ -38,6 +40,9 @@ function enterApp() {
   $("#user-label").textContent = `${state.user.username} (${state.user.role})`;
   const isAdmin = state.user.role === "admin";
   $$(".admin-only").forEach(el => el.classList.toggle("hidden", !isAdmin));
+  // Hide what the role cannot do; the server enforces the same rules.
+  $("#btn-upload").classList.toggle("hidden", !roleAtLeast("uploader"));
+  $(".tag-import").classList.toggle("hidden", !roleAtLeast("contributor"));
   loadPrefs().then(route);
 }
 

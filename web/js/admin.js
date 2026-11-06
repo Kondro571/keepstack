@@ -1,4 +1,4 @@
-// Admin views: dashboard (stats, fixity check), users, and the audit log.
+// Admin views: dashboard (stats, fixity check) and the audit log. Users live in users.js.
 import { $, api, esc, fmtBytes } from "./core.js";
 import { registerView } from "./router.js";
 
@@ -17,20 +17,6 @@ $("#btn-fixity").addEventListener("click", async () => {
   $("#fixity-result").textContent = "Checking...";
   const r = await api("/api/admin/fixity", { method: "POST" });
   $("#fixity-result").textContent = r.ok ? `All ${r.checked} blobs verified. Integrity intact.` : `${r.failures.length} of ${r.checked} failed fixity.`;
-});
-
-// ---------- users ----------
-async function loadUsers() {
-  const data = await api("/api/users");
-  $("#user-rows").innerHTML = data.users.map(u =>
-    `<tr><td>${esc(u.username)}</td><td>${esc(u.email||"")}</td><td>${u.role}</td><td>${u.is_active?"Yes":"No"}</td><td>${(u.last_login||"").slice(0,16).replace("T"," ")}</td></tr>`).join("");
-}
-registerView("users", loadUsers);
-$("#btn-new-user").addEventListener("click", async () => {
-  const username = prompt("Username"); if (!username) return;
-  const password = prompt("Temporary password"); if (!password) return;
-  const role = prompt("Role (admin/editor/contributor/viewer)", "contributor") || "viewer";
-  await api("/api/users", { json: { username, password, role } }); loadUsers();
 });
 
 // ---------- audit ----------

@@ -8,6 +8,13 @@ semantic versioning.
 
 ### Added
 
+- User management: a real add/edit form with role cards, inline role change,
+  disable/enable and delete (`DELETE /api/users/{id}`, `GET /api/roles`).
+  New `uploader` role (browse and add files, no editing). The server validates
+  usernames, emails, passwords (min. 8) and roles, and refuses to demote,
+  disable or delete the last active admin or the acting admin themselves.
+  The UI hides Upload, tag import and edit controls the role cannot use.
+
 - Bulk tag import from CSV, XLSX, or XML (`POST /api/tags/import`, and an
   "Import tags" section in the upload dialog). Rows are matched to assets by
   file name or UUID, which covers formats like Illustrator `.ai` that carry no

@@ -1,5 +1,5 @@
 // Asset detail drawer: preview, metadata editing, tags, sharing, deletion.
-import { $, $$, api, esc, fmtBytes, notifyCatalogChanged, state, toast } from "./core.js";
+import { $, $$, api, esc, fmtBytes, notifyCatalogChanged, roleAtLeast, toast } from "./core.js";
 
 const drawer = $("#drawer");
 $("#drawer-close").addEventListener("click", closeDrawer);
@@ -16,7 +16,7 @@ export async function openAsset(uuid) {
     api("/api/assets/" + uuid + "/similar"),
   ]);
   const a = d.asset;
-  const canEdit = ["admin","editor","contributor"].includes(state.user.role);
+  const canEdit = roleAtLeast("contributor");
   // /preview falls back to the grid thumbnail for files without a usable rendition
   const preview = `<img class="detail-preview" src="/api/assets/${uuid}/preview" alt="${esc(a.alt_text||a.title)}">`;
   const dc = a.dublin_core || {};
@@ -27,7 +27,7 @@ export async function openAsset(uuid) {
     <div class="btn-row">
       <a class="btn" href="/api/assets/${uuid}/file" download>Download</a>
       ${canEdit?`<button class="btn" id="d-share">Create share link</button>`:""}
-      ${["admin","editor"].includes(state.user.role)?`<button class="btn btn-danger" id="d-delete">Delete</button>`:""}
+      ${roleAtLeast("editor")?`<button class="btn btn-danger" id="d-delete">Delete</button>`:""}
     </div>
 
     ${canEdit ? `<div class="detail-section"><h4>Edit metadata</h4>
