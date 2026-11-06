@@ -169,10 +169,13 @@ def _unb64(text: str) -> bytes:
     return base64.urlsafe_b64decode(text + pad)
 
 
-def make_token(user_id: int, role: str) -> str:
+def make_token(user_id: int, role: str, version: int = 0) -> str:
+    # ``v`` must match users.token_version; bumping that column (e.g. on a
+    # password change) revokes every token issued before.
     payload = {
         "sub": user_id,
         "role": role,
+        "v": version,
         "exp": int(time.time()) + config.token_ttl_hours * 3600,
     }
     body = _b64(json.dumps(payload, separators=(",", ":")).encode())

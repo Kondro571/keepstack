@@ -1,5 +1,5 @@
-// Admin views: dashboard (stats, fixity check) and the audit log. Users live in users.js.
-import { $, api, esc, fmtBytes } from "./core.js";
+// Admin views: dashboard (stats, settings, fixity check) and the audit log. Users live in users.js.
+import { $, api, errorMessage, esc, fmtBytes, state, toast } from "./core.js";
 import { registerView } from "./router.js";
 
 // ---------- dashboard ----------
@@ -11,7 +11,21 @@ async function loadDashboard() {
     ...Object.entries(s.by_type).map(([k,v]) => [k.charAt(0).toUpperCase()+k.slice(1), v]),
   ];
   $("#stat-cards").innerHTML = cards.map(([l,n]) => `<div class="stat-card"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
+  const settings = await api("/api/settings");
+  state.settings = settings;
+  $("#set-upload-gb").value = +(settings.max_upload_mb / 1024).toFixed(2);
 }
+
+// ---------- settings ----------
+// The limit is stored in MB; the form shows GB, which is what people think in.
+$("#settings-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const mb = Math.round(parseFloat($("#set-upload-gb").value) * 1024);
+  try {
+    state.settings = await api("/api/settings", { method: "PATCH", json: { max_upload_mb: mb } });
+    toast(`Upload limit set to ${fmtBytes(state.settings.max_upload_mb * 1024 * 1024)}`);
+  } catch (err) { toast(errorMessage(err, "Could not save settings"), "err"); }
+});
 registerView("dashboard", loadDashboard);
 $("#btn-fixity").addEventListener("click", async () => {
   $("#fixity-result").textContent = "Checking...";

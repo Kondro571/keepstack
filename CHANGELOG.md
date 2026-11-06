@@ -6,8 +6,38 @@ semantic versioning.
 
 ## [Unreleased]
 
+### Security
+
+- Files, thumbnails and previews now require a signed-in user; before, anyone
+  with an asset UUID could load its full-resolution image. OAI-PMH (which listed
+  every UUID) and IIIF require sign-in too, unless `KEEPSTACK_PUBLIC_API=true`.
+- The web client keeps its session in an `HttpOnly`, `SameSite=Lax` cookie
+  instead of `localStorage`, with a CSRF header check on state-changing
+  requests. Bearer tokens still work for API clients. A password change revokes
+  the user's existing sessions, and logout clears the cookie on the server.
+- The public share page escaped nothing, so a title could run script on the
+  app's origin; all fields are now escaped. Share links stop working when their
+  asset is deleted, contributors manage only their own links, and new links are
+  validated (existing asset, permission, expiry, download count).
+- Security headers on every response (CSP, `nosniff`, `X-Frame-Options`,
+  `Referrer-Policy`); `/docs` and `/openapi.json` are off unless
+  `KEEPSTACK_API_DOCS=true`.
+- Uploads are limited (3 GB by default, adjustable by an admin in the
+  dashboard) and refused before the body is read; files are streamed to disk
+  instead of read into memory, and ingest no longer blocks the server while it
+  runs.
+
 ### Added
 
+- Tag filter in the library: a "Filter tags" panel where each tag can be
+  marked "must have" or "must not have" (with "all" or "any" of the wanted
+  tags), applied with Filter. Active filters show as removable chips and live
+  in the URL (`?tag=a&tag=b&not=c&match=any`); a sidebar tag adds a "must
+  have" tag. The API takes repeated `tag` and `not_tag` plus `tag_match`.
+- Sortable list columns: click Name, Type, Size, Dimensions or Added to sort,
+  again to reverse. New sorts (`name_desc`, `smallest`, `type`, `type_desc`,
+  `dims`, `dims_desc`) and `relevance`, which is the default while searching;
+  any other sort now applies to search results too.
 - Library list layout next to the grid: small thumbnail, title, file name,
   type, a preview of tags, size, dimensions and date. The choice is stored per
   user. Search results now include `tags` (up to 5) and `tag_count`.

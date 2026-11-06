@@ -141,20 +141,25 @@ sequenceDiagram
 
 ```mermaid
 flowchart TD
-  R["Incoming request"] --> H{"Authorization<br/>Bearer token?"}
-  H -->|no| P{"Public route?<br/>(share link, OAI, IIIF, thumb)"}
+  R["Incoming request"] --> H{"Bearer token or<br/>session cookie?"}
+  H -->|no| P{"Public route?<br/>(share link, health,<br/>OAI/IIIF if public)"}
   P -->|yes| OK["Serve"]
   P -->|no| E401["401"]
-  H -->|yes| V{"HMAC valid<br/>and not expired?"}
+  H -->|cookie, mutating| C{"X-Requested-With<br/>header?"}
+  C -->|no| E403
+  C -->|yes| V
+  H -->|bearer, or cookie on GET| V{"HMAC valid, not expired,<br/>token version current?"}
   V -->|no| E401
   V -->|yes| ROLE{"Role high enough<br/>for this route?"}
   ROLE -->|no| E403["403"]
   ROLE -->|yes| AUD["Log to audit trail<br/>(on mutations)"] --> OK
 ```
 
-Tokens are stateless HMAC payloads signed with a server secret (a minimal
-JWT-style scheme on the standard library), so there is no session store and no
-crypto dependency.
+Tokens are HMAC payloads signed with a server secret (a minimal JWT-style
+scheme on the standard library), so there is no session store and no crypto
+dependency. The browser keeps its token in an HttpOnly cookie; API clients send
+it as `Authorization: Bearer`. Each token carries the user's `token_version`,
+and a password change bumps it, which revokes every earlier token.
 
 ## Why it is shaped this way
 

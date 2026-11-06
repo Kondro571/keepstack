@@ -10,7 +10,7 @@ from __future__ import annotations
 import sqlite3
 import threading
 from contextlib import contextmanager
-from typing import Iterator
+from typing import Iterator, Optional
 
 from .config import config
 
@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS users (
     role          TEXT NOT NULL DEFAULT 'viewer',
     is_active     INTEGER NOT NULL DEFAULT 1,
     created_at    TEXT NOT NULL,
-    last_login    TEXT
+    last_login    TEXT,
+    token_version INTEGER NOT NULL DEFAULT 0  -- bumped to revoke sessions
+);
+
+-- Instance settings an admin can change at runtime (e.g. upload limit).
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
 );
 
 -- Per-user UI state (e.g. which sidebar groups are collapsed), as JSON.
@@ -242,4 +249,19 @@ def init_db() -> None:
     config.ensure_dirs()
     conn = get_conn()
     conn.executescript(SCHEMA)
+    # Columns added after a table first shipped: CREATE IF NOT EXISTS skips them.
+    user_cols = {r["name"] for r in conn.execute("PRAGMA table_info(users)")}
+    if "token_version" not in user_cols:
+        conn.execute("ALTER TABLE users ADD COLUMN token_version INTEGER NOT NULL DEFAULT 0")
     conn.commit()
+
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    row = get_conn().execute("SELECT value FROM settings WHERE key = ?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with transaction() as conn:
+        conn.execute("INSERT INTO settings (key, value) VALUES (?, ?) "
+                     "ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))

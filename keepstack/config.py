@@ -28,6 +28,9 @@ class Config:
         # Auth
         self.secret_key = os.environ.get("KEEPSTACK_SECRET_KEY", "")
         self.token_ttl_hours = int(os.environ.get("KEEPSTACK_TOKEN_TTL_HOURS", "168"))
+        # The browser session cookie is marked Secure when the public URL is
+        # https (set KEEPSTACK_BASE_URL); override with KEEPSTACK_COOKIE_SECURE.
+        self.cookie_secure = _env_bool("KEEPSTACK_COOKIE_SECURE", False)
 
         # Login throttling: lock out after N failures within the window, both
         # per (username, ip) and per ip. Trusted proxies let client_ip honour
@@ -42,8 +45,15 @@ class Config:
         self.admin_user = os.environ.get("KEEPSTACK_ADMIN_USER", "admin")
         self.admin_password = os.environ.get("KEEPSTACK_ADMIN_PASSWORD", "admin")
 
-        # Uploads
-        self.max_upload_mb = int(os.environ.get("KEEPSTACK_MAX_UPLOAD_MB", "1024"))
+        # Uploads: the default limit per upload request; admins can change it
+        # in the dashboard, which takes precedence (settings table).
+        self.max_upload_mb = int(os.environ.get("KEEPSTACK_MAX_UPLOAD_MB", "3072"))
+
+        # OAI-PMH and IIIF endpoints are public only when enabled; otherwise
+        # they require a signed-in user like the rest of the catalog.
+        self.public_api = _env_bool("KEEPSTACK_PUBLIC_API", False)
+        # Interactive API docs (/docs, /redoc, /openapi.json).
+        self.api_docs = _env_bool("KEEPSTACK_API_DOCS", False)
 
         # Optional OCR via the Tesseract binary (used only when installed).
         self.ocr_enabled = _env_bool("KEEPSTACK_OCR_ENABLED", True)
@@ -59,6 +69,7 @@ class Config:
         self.base_url = os.environ.get("KEEPSTACK_BASE_URL", "http://localhost:8000")
         self.repository_name = os.environ.get("KEEPSTACK_REPOSITORY_NAME", "Keepstack Repository")
         self.admin_email = os.environ.get("KEEPSTACK_ADMIN_EMAIL", "admin@example.org")
+        self.cookie_secure = self.cookie_secure or self.base_url.startswith("https://")
 
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.blob_dir, self.thumb_dir, self.cache_dir):

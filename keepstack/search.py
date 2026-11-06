@@ -13,19 +13,40 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
+from typing import Iterable, Optional
 
 from . import ai
 from .db import get_conn
 
-# Each sort ends on the row id so pages are stable when values tie, and each
-# is backed by a (status, column) index in db.py.
+# Each sort ends on the row id so pages are stable when values tie. Date, name,
+# size and type are backed by (status, column) indexes in db.py; dimensions
+# sort in memory (width x height has no index), still fine at 100k rows.
 SORTS = {
     "newest": "a.created_at DESC, a.id DESC",
     "oldest": "a.created_at ASC, a.id ASC",
-    "name": "a.title ASC, a.id ASC",
+    "name": "a.title COLLATE NOCASE ASC, a.id ASC",
+    "name_desc": "a.title COLLATE NOCASE DESC, a.id DESC",
     "largest": "a.size DESC, a.id DESC",
+    "smallest": "a.size ASC, a.id ASC",
+    "type": "a.media_type ASC, a.ext ASC, a.id ASC",
+    "type_desc": "a.media_type DESC, a.ext DESC, a.id DESC",
+    "dims_desc": "COALESCE(a.width * a.height, 0) DESC, a.id DESC",
+    "dims": "COALESCE(a.width * a.height, 0) ASC, a.id ASC",
 }
+# "relevance" orders full-text matches by rank; without a query it means newest.
+DEFAULT_SORT = "relevance"
+TAG_MATCHES = ("all", "any")
+_TAGGED = ("SELECT at.asset_id FROM asset_tags at JOIN tags t ON t.id = at.tag_id "
+           "WHERE t.name IN ({marks})")
+
+
+def _clean_tags(tags: Optional[Iterable[str]]) -> list[str]:
+    out = []
+    for t in tags or ():
+        t = (t or "").strip().lower()
+        if t and t not in out:
+            out.append(t)
+    return out
 
 # Columns needed for a grid card; never the embedding blob.
 _CARD_COLS = ("id, uuid, title, filename, media_type, mime_type, ext, size, width, height, "
@@ -53,14 +74,22 @@ def search(
     q: str = "",
     media_type: Optional[str] = None,
     tag: Optional[str] = None,
+    tags: Optional[Iterable[str]] = None,
+    not_tags: Optional[Iterable[str]] = None,
+    tag_match: str = "all",
     collection_id: Optional[int] = None,
     status: str = "active",
-    sort: str = "newest",
+    sort: str = DEFAULT_SORT,
     mode: str = "keyword",
     limit: int = 60,
     offset: int = 0,
 ) -> dict:
+    """``tags`` must be on an asset (all of them, or any with
+    ``tag_match="any"``) and ``not_tags`` must not; ``tag`` is one more
+    required tag, kept for older callers."""
     conn = get_conn()
+    include = _clean_tags([*(tags or ()), *([tag] if tag else [])])
+    exclude = _clean_tags(not_tags)
 
     # Semantic mode ranks the candidate pool by embedding similarity.
     if mode == "semantic" and q.strip():
@@ -83,16 +112,23 @@ def search(
     if media_type:
         where.append("a.media_type = ?")
         params.append(media_type)
-    if tag:
-        where.append("a.id IN (SELECT at.asset_id FROM asset_tags at "
-                     "JOIN tags t ON t.id = at.tag_id WHERE t.name = ?)")
-        params.append(tag.lower())
+    if include:
+        sub = _TAGGED.format(marks=",".join("?" * len(include)))
+        if tag_match == "any" or len(include) == 1:
+            where.append(f"a.id IN ({sub})")
+            params.extend(include)
+        else:
+            where.append(f"a.id IN ({sub} GROUP BY at.asset_id HAVING COUNT(DISTINCT t.id) = ?)")
+            params.extend([*include, len(include)])
+    if exclude:
+        where.append(f"a.id NOT IN ({_TAGGED.format(marks=','.join('?' * len(exclude)))})")
+        params.extend(exclude)
     if collection_id:
         where.append("a.id IN (SELECT asset_id FROM collection_assets WHERE collection_id = ?)")
         params.append(collection_id)
 
     where_sql = " AND ".join(where)
-    order = "m.rank, a.id" if fts else SORTS.get(sort, SORTS["newest"])
+    order = "m.rank, a.id" if fts and sort not in SORTS else SORTS.get(sort, SORTS["newest"])
 
     total = conn.execute(
         f"SELECT COUNT(*) AS c FROM {source} WHERE {where_sql}", params

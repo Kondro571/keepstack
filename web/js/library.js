@@ -1,4 +1,4 @@
-// Library view: search, sort, paging, grid/list layout, and the sidebar facets.
+// Library view: search, sort, tag filter, paging, grid/list layout, and the sidebar facets.
 import { $, $$, api, esc, fmtBytes, isPlainClick, state } from "./core.js";
 import { currentView, registerView, route } from "./router.js";
 import { openAsset } from "./asset.js";
@@ -6,16 +6,144 @@ import { canSelect, clearSelection, selected, selectPage, setPage, toggle } from
 
 let searchTimer;
 // typing replaces the history entry instead of adding one per keystroke
-$("#search").addEventListener("input", (e) => { state.q = e.target.value; clearTimeout(searchTimer); searchTimer = setTimeout(() => loadLibrary({ push: false }), 250); });
+$("#search").addEventListener("input", (e) => {
+  // a search ranks by best match unless another order was picked
+  const defaultOrder = state.sort === defaultSort();
+  state.q = e.target.value;
+  if (defaultOrder) state.sort = defaultSort();
+  syncSortSelect();
+  clearTimeout(searchTimer); searchTimer = setTimeout(() => loadLibrary({ push: false }), 250);
+});
 $("#search-mode").addEventListener("change", (e) => { state.mode = e.target.value; loadLibrary(); });
 $("#sort").addEventListener("change", (e) => { state.sort = e.target.value; loadLibrary(); });
-$("#active-filter").addEventListener("click", () => { state.media = null; state.tag = null; state.collection = null; loadLibrary(); });
+
+// ---------- sorting ----------
+const SORTS = ["relevance", "newest", "oldest", "name", "name_desc", "largest", "smallest",
+  "type", "type_desc", "dims_desc", "dims"];
+const defaultSort = () => state.q ? "relevance" : "newest";
+function syncSortSelect() {
+  $("#sort option[value=relevance]").disabled = !state.q;
+  $("#sort").value = state.sort;
+}
+// Sortable list columns: [ascending, descending] sort, first click uses `first`.
+const SORT_COLUMNS = {
+  name: { asc: "name", desc: "name_desc", first: "asc" },
+  type: { asc: "type", desc: "type_desc", first: "asc" },
+  size: { asc: "smallest", desc: "largest", first: "desc" },
+  dims: { asc: "dims", desc: "dims_desc", first: "desc" },
+  date: { asc: "oldest", desc: "newest", first: "desc" },
+};
+function sortHeader(col, label, cls = "") {
+  const c = SORT_COLUMNS[col];
+  const dir = state.sort === c.asc ? "asc" : state.sort === c.desc ? "desc" : null;
+  const aria = dir ? ` aria-sort="${dir === "asc" ? "ascending" : "descending"}"` : "";
+  return `<th class="${cls}"${aria}><button type="button" class="th-sort${dir ? " active" : ""}" data-sort-col="${col}"
+    title="Sort by ${label.toLowerCase()}">${label}<span class="arrow">${dir === "asc" ? "&#9650;" : dir === "desc" ? "&#9660;" : "&#8693;"}</span></button></th>`;
+}
+function sortByColumn(col) {
+  const c = SORT_COLUMNS[col];
+  state.sort = state.sort === c[c.first] ? c[c.first === "asc" ? "desc" : "asc"] : c[c.first];
+  syncSortSelect();
+  loadLibrary();
+}
+
+// ---------- active filters ----------
+// One removable chip per filter; clicking a chip drops just that filter.
+function renderActiveFilters() {
+  const chips = [];
+  if (state.media) chips.push(["media", "", state.media, "Media type"]);
+  if (state.collection) chips.push(["collection", "", "collection", "Collection"]);
+  state.tagsIn.forEach(t => chips.push(["in", t, "#" + t, "Must have tag"]));
+  state.tagsOut.forEach(t => chips.push(["out", t, "#" + t, "Must not have tag"]));
+  $("#active-filters").innerHTML = chips.map(([kind, val, label, title]) =>
+    `<button type="button" class="chip chip-${kind}" data-kind="${kind}" data-value="${esc(val)}" title="${title} (click to remove)">${kind === "out" ? "not " : ""}${esc(label)}</button>`).join("")
+    + (chips.length > 1 ? '<button type="button" class="chip-clear btn btn-ghost" data-kind="all">Clear all</button>' : "");
+  const n = state.tagsIn.length + state.tagsOut.length;
+  $("#tag-filter-count").textContent = n;
+  $("#tag-filter-count").classList.toggle("hidden", !n);
+}
+$("#active-filters").addEventListener("click", (e) => {
+  const chip = e.target.closest("[data-kind]");
+  if (!chip) return;
+  const { kind, value } = chip.dataset;
+  if (kind === "media" || kind === "all") state.media = null;
+  if (kind === "collection" || kind === "all") state.collection = null;
+  if (kind === "in") state.tagsIn = state.tagsIn.filter(t => t !== value);
+  if (kind === "out") state.tagsOut = state.tagsOut.filter(t => t !== value);
+  if (kind === "all") { state.tagsIn = []; state.tagsOut = []; }
+  loadLibrary();
+});
+
+// ---------- tag filter panel ----------
+// Choices are a draft until Filter is clicked; the list is fetched on open.
+const TF_SHOW = 300;  // rows rendered at once; the search box narrows the rest
+const draft = { in: new Set(), out: new Set() };
+let allTags = [];
+const tagPanel = $("#tag-filter");
+$("#btn-tag-filter").addEventListener("click", () => tagPanel.classList.contains("hidden") ? openTagFilter() : closeTagFilter());
+async function openTagFilter() {
+  draft.in = new Set(state.tagsIn); draft.out = new Set(state.tagsOut);
+  $("#tf-match").value = state.tagMatch; $("#tf-search").value = "";
+  tagPanel.classList.remove("hidden"); $("#btn-tag-filter").setAttribute("aria-expanded", "true");
+  $("#tf-list").innerHTML = '<li class="muted">Loading tags...</li>';
+  allTags = (await api("/api/tags")).tags.filter(t => t.c > 0 || draft.in.has(t.name) || draft.out.has(t.name));
+  renderTagList();
+  $("#tf-search").focus();
+}
+function closeTagFilter() {
+  tagPanel.classList.add("hidden"); $("#btn-tag-filter").setAttribute("aria-expanded", "false");
+}
+function renderTagList() {
+  const needle = $("#tf-search").value.trim().toLowerCase();
+  // most used first; picking a tag never moves it, so the list stays put while clicking
+  const rows = allTags.filter(t => !needle || t.name.includes(needle))
+    .sort((a, b) => b.c - a.c || a.name.localeCompare(b.name));
+  const shown = rows.slice(0, TF_SHOW);
+  $("#tf-list").innerHTML = shown.map(t => {
+    const st = draft.in.has(t.name) ? "in" : draft.out.has(t.name) ? "out" : "";
+    return `<li class="${st}" data-tag="${esc(t.name)}">
+      <span class="tf-name">${esc(t.name)}</span><span class="count">${t.c}</span>
+      <button type="button" class="tf-btn in" data-set="in" aria-pressed="${st === "in"}" title="Must have">&#10003;</button>
+      <button type="button" class="tf-btn out" data-set="out" aria-pressed="${st === "out"}" title="Must not have">&#10005;</button>
+    </li>`;
+  }).join("") + (rows.length > TF_SHOW ? `<li class="muted">${rows.length - TF_SHOW} more tags; type to narrow the list</li>`
+    : !rows.length ? '<li class="muted">No tags match</li>' : "");
+  const parts = [];
+  if (draft.in.size) parts.push(`${draft.in.size} must have`);
+  if (draft.out.size) parts.push(`${draft.out.size} must not have`);
+  $("#tf-summary").textContent = parts.join(", ") || "No tags chosen";
+}
+$("#tf-search").addEventListener("input", renderTagList);
+$("#tf-search").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); applyTagFilter(); } });
+$("#tf-list").addEventListener("click", (e) => {
+  const li = e.target.closest("li[data-tag]");
+  if (!li) return;
+  const name = li.dataset.tag;
+  // the buttons set a state (clicking the active one clears it); the row cycles none -> in -> out
+  const set = e.target.closest("[data-set]")?.dataset.set
+    ?? (draft.in.has(name) ? "out" : draft.out.has(name) ? null : "in");
+  const was = draft.in.has(name) ? "in" : draft.out.has(name) ? "out" : null;
+  draft.in.delete(name); draft.out.delete(name);
+  if (set && !(e.target.closest("[data-set]") && was === set)) draft[set].add(name);
+  renderTagList();
+});
+$("#tf-reset").addEventListener("click", () => { draft.in.clear(); draft.out.clear(); renderTagList(); });
+$("#tf-apply").addEventListener("click", applyTagFilter);
+function applyTagFilter() {
+  state.tagsIn = [...draft.in]; state.tagsOut = [...draft.out]; state.tagMatch = $("#tf-match").value;
+  closeTagFilter();
+  loadLibrary();
+}
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !tagPanel.classList.contains("hidden")) closeTagFilter();
+});
 
 const PAGE_SIZES = [10, 50, 100, 500];
 let prefPageSize = 50, pageSize = 50, page = 1, lastFilterKey = "", librarySeq = 0;
-const filterKey = () => JSON.stringify([state.q, state.mode, state.sort, state.media, state.tag, state.collection]);
+const tagKey = () => [state.tagsIn, state.tagsOut, state.tagsIn.length > 1 ? state.tagMatch : ""];
+const filterKey = () => JSON.stringify([state.q, state.mode, state.sort, state.media, ...tagKey(), state.collection]);
 // Same files regardless of order; a different result set drops the selection.
-const resultSetKey = () => JSON.stringify([state.q, state.mode, state.media, state.tag, state.collection]);
+const resultSetKey = () => JSON.stringify([state.q, state.mode, state.media, ...tagKey(), state.collection]);
 let lastResultSetKey = null;
 
 // Grid (cards) or list (rows with tags and details); a per-user preference.
@@ -42,9 +170,11 @@ function libraryUrl() {
   if (state.q) p.set("q", state.q);
   if (state.mode !== "keyword") p.set("mode", state.mode);
   if (state.media) p.set("media", state.media);
-  if (state.tag) p.set("tag", state.tag);
+  state.tagsIn.forEach(t => p.append("tag", t));
+  state.tagsOut.forEach(t => p.append("not", t));
+  if (state.tagsIn.length > 1 && state.tagMatch === "any") p.set("match", "any");
   if (state.collection) p.set("collection", state.collection);
-  if (state.sort !== "newest") p.set("sort", state.sort);
+  if (state.sort !== defaultSort()) p.set("sort", state.sort);
   if (page > 1) p.set("page", page);
   if (pageSize !== prefPageSize) p.set("size", pageSize);
   const qs = p.toString();
@@ -54,14 +184,17 @@ function readLibraryUrl() {
   const p = new URLSearchParams(location.search);
   state.q = p.get("q") || "";
   state.mode = p.get("mode") === "semantic" ? "semantic" : "keyword";
-  state.media = p.get("media"); state.tag = p.get("tag"); state.collection = p.get("collection");
-  state.sort = ["newest", "oldest", "name", "largest"].includes(p.get("sort")) ? p.get("sort") : "newest";
+  state.media = p.get("media"); state.collection = p.get("collection");
+  const tags = (key) => [...new Set(p.getAll(key).map(t => t.trim().toLowerCase()).filter(Boolean))];
+  state.tagsIn = tags("tag"); state.tagsOut = tags("not").filter(t => !state.tagsIn.includes(t));
+  state.tagMatch = p.get("match") === "any" ? "any" : "all";
+  state.sort = SORTS.includes(p.get("sort")) && (p.get("sort") !== "relevance" || state.q) ? p.get("sort") : defaultSort();
   page = Math.max(1, parseInt(p.get("page"), 10) || 1);
   const size = parseInt(p.get("size"), 10);
   pageSize = PAGE_SIZES.includes(size) ? size : prefPageSize;
   lastFilterKey = filterKey();  // the page in the URL must not be reset as a "new search"
   $("#search").value = state.q; $("#search-mode").value = state.mode;
-  $("#sort").value = state.sort; $("#page-size").value = String(pageSize);
+  syncSortSelect(); $("#page-size").value = String(pageSize);
 }
 
 registerView("library", () => { readLibraryUrl(); loadLibrary({ push: false }); });
@@ -85,7 +218,9 @@ export async function loadLibrary({ push = true } = {}) {
   const p = new URLSearchParams({ q: state.q, sort: state.sort, mode: state.mode,
     limit: String(pageSize), offset: String((page - 1) * pageSize) });
   if (state.media) p.set("media_type", state.media);
-  if (state.tag) p.set("tag", state.tag);
+  state.tagsIn.forEach(t => p.append("tag", t));
+  state.tagsOut.forEach(t => p.append("not_tag", t));
+  p.set("tag_match", state.tagMatch);
   if (state.collection) p.set("collection_id", state.collection);
   const seq = ++librarySeq;
   const data = await api("/api/assets?" + p.toString());
@@ -96,9 +231,7 @@ export async function loadLibrary({ push = true } = {}) {
   renderFacets(data.facets);
   renderResults(data.items, data.total);
   renderPager(data.total);
-  const filt = state.media || (state.tag ? "#" + state.tag : null) || (state.collection ? "collection" : null);
-  $("#active-filter").classList.toggle("hidden", !filt);
-  if (filt) $("#active-filter").textContent = filt;
+  renderActiveFilters();
 }
 
 function renderResults(items, total) {
@@ -119,8 +252,8 @@ function renderResults(items, total) {
     grid.innerHTML = items.length ? `<table class="asset-list">
       <thead><tr>
         ${sel ? '<th class="col-check"><input type="checkbox" class="select-all" aria-label="Select page"></th>' : ""}
-        <th></th><th>Name</th><th class="col-type">Type</th><th class="col-tags">Tags</th>
-        <th>Size</th><th class="col-dims">Dimensions</th><th class="col-date">Added</th>
+        <th></th>${sortHeader("name", "Name")}${sortHeader("type", "Type", "col-type")}<th class="col-tags">Tags</th>
+        ${sortHeader("size", "Size")}${sortHeader("dims", "Dimensions", "col-dims")}${sortHeader("date", "Added", "col-date")}
       </tr></thead>
       <tbody>${items.map(a => `<tr data-uuid="${a.uuid}">
         ${sel ? `<td class="col-check">${check(a)}</td>` : ""}
@@ -149,6 +282,8 @@ function renderResults(items, total) {
 // One listener for both layouts: checkboxes select, anything else opens the asset.
 // Ctrl/Cmd-click selects too, Shift selects a range on the page.
 $("#grid").addEventListener("click", (e) => {
+  const th = e.target.closest("[data-sort-col]");
+  if (th) { sortByColumn(th.dataset.sortCol); return; }
   const cb = e.target.closest("[data-select]");
   if (cb) { toggle(cb.dataset.select, cb.checked, { range: e.shiftKey }); return; }
   if (e.target.closest(".select-box, .col-check")) return;  // padding around a checkbox
@@ -197,9 +332,16 @@ function renderFacets(facets) {
   $("#facet-media").innerHTML = (facets.media_types || []).map(m =>
     `<li class="${state.media===m.value?'active':''}" data-media="${m.value}"><span>${m.value}</span><span class="count">${m.count}</span></li>`).join("");
   $("#facet-tags").innerHTML = (facets.tags || []).slice(0, 18).map(t =>
-    `<li class="${state.tag===t.value?'active':''}" data-tag="${esc(t.value)}"><span>${esc(t.value)}</span><span class="count">${t.count}</span></li>`).join("");
+    `<li class="${state.tagsIn.includes(t.value)?'active':state.tagsOut.includes(t.value)?'excluded':''}" data-tag="${esc(t.value)}"><span>${esc(t.value)}</span><span class="count">${t.count}</span></li>`).join("");
   $$("#facet-media li").forEach(li => li.addEventListener("click", () => { state.media = state.media===li.dataset.media?null:li.dataset.media; loadLibrary(); }));
-  $$("#facet-tags li").forEach(li => li.addEventListener("click", () => { state.tag = state.tag===li.dataset.tag?null:li.dataset.tag; loadLibrary(); }));
+  // a sidebar tag adds to (or drops from) the "must have" tags
+  $$("#facet-tags li").forEach(li => li.addEventListener("click", () => {
+    const t = li.dataset.tag;
+    const had = state.tagsIn.includes(t) || state.tagsOut.includes(t);
+    state.tagsIn = state.tagsIn.filter(x => x !== t); state.tagsOut = state.tagsOut.filter(x => x !== t);
+    if (!had) state.tagsIn.push(t);
+    loadLibrary();
+  }));
 }
 
 // Collapsed facet groups and page size are stored per user on the server, so

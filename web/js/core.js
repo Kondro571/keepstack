@@ -1,16 +1,18 @@
 /* Shared helpers and state for the Keepstack client. Vanilla JS, no build step. */
 export const $ = (s, r = document) => r.querySelector(s);
 export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
-export const state = { token: localStorage.getItem("keepstack_token"), user: null,
-  q: "", mode: "keyword", media: null, tag: null, sort: "newest", collection: null };
+export const state = { user: null, settings: { max_upload_mb: null },
+  q: "", mode: "keyword", media: null, sort: "newest", collection: null,
+  tagsIn: [], tagsOut: [], tagMatch: "all" };  // tag filter: must have / must not have
 
 // ---------- API helper ----------
 let onUnauthorized = () => {};
 export function setUnauthorizedHandler(fn) { onUnauthorized = fn; }
 
+// The session lives in an HttpOnly cookie the browser sends by itself; the
+// header marks requests as coming from this client (the server's CSRF check).
 export async function api(path, opts = {}) {
-  const headers = opts.headers || {};
-  if (state.token) headers["Authorization"] = "Bearer " + state.token;
+  const headers = { "X-Requested-With": "keepstack", ...opts.headers };
   if (opts.json) { headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(opts.json); opts.method ??= "POST"; }
   const res = await fetch(path, { ...opts, headers });
   if (res.status === 401) { onUnauthorized(); throw new Error("unauthorised"); }

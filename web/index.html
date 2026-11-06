@@ -72,7 +72,9 @@
           <div class="view-head">
             <h2 id="result-title">Library</h2>
             <div class="view-controls">
-              <span id="active-filter" class="chip hidden"></span>
+              <button type="button" id="btn-tag-filter" class="btn btn-ghost" aria-expanded="false" aria-controls="tag-filter">
+                Filter tags <span id="tag-filter-count" class="count-badge hidden"></span>
+              </button>
               <label class="check select-page hidden" title="Select every file on this page">
                 <input type="checkbox" id="select-page"> Select page
               </label>
@@ -80,11 +82,18 @@
                 <button type="button" class="btn btn-ghost" data-layout="grid" title="Grid" aria-label="Grid view">&#9638;</button>
                 <button type="button" class="btn btn-ghost" data-layout="list" title="List" aria-label="List view">&#9776;</button>
               </div>
-              <select id="sort">
+              <select id="sort" title="Sort">
+                <option value="relevance">Best match</option>
                 <option value="newest">Newest</option>
                 <option value="oldest">Oldest</option>
-                <option value="name">Name</option>
-                <option value="largest">Largest</option>
+                <option value="name">Name A-Z</option>
+                <option value="name_desc">Name Z-A</option>
+                <option value="largest">Largest file</option>
+                <option value="smallest">Smallest file</option>
+                <option value="type">Type A-Z</option>
+                <option value="type_desc">Type Z-A</option>
+                <option value="dims_desc">Largest dimensions</option>
+                <option value="dims">Smallest dimensions</option>
               </select>
               <select id="page-size" title="Items per page">
                 <option value="10">10 per page</option>
@@ -92,6 +101,27 @@
                 <option value="100">100 per page</option>
                 <option value="500">500 per page</option>
               </select>
+            </div>
+          </div>
+          <div id="active-filters" class="active-filters" aria-label="Active filters"></div>
+          <!-- tag filter: pick tags that must / must not be on a file, then Filter -->
+          <div id="tag-filter" class="tag-filter panel hidden" role="region" aria-label="Filter by tags">
+            <div class="tf-head">
+              <input id="tf-search" type="search" placeholder="Find a tag..." autocomplete="off" aria-label="Find a tag">
+              <label class="muted">Files must have
+                <select id="tf-match">
+                  <option value="all">all of the &#10003; tags</option>
+                  <option value="any">any of the &#10003; tags</option>
+                </select>
+              </label>
+            </div>
+            <p class="muted tf-legend"><span class="tf-key in">&#10003;</span> must have &nbsp; <span class="tf-key out">&#10005;</span> must not have</p>
+            <ul id="tf-list" class="tf-list"></ul>
+            <div class="tf-actions">
+              <span id="tf-summary" class="muted"></span>
+              <span class="spacer"></span>
+              <button type="button" id="tf-reset" class="btn btn-ghost">Clear</button>
+              <button type="button" id="tf-apply" class="btn btn-primary">Filter</button>
             </div>
           </div>
           <div id="grid" class="grid"></div>
@@ -123,6 +153,17 @@
         <div id="view-dashboard" class="view hidden">
           <div class="view-head"><h2>Dashboard</h2></div>
           <div id="stat-cards" class="stat-cards"></div>
+          <div class="panel">
+            <h3>Settings</h3>
+            <form id="settings-form" class="settings-form">
+              <label for="set-upload-gb">Maximum upload size</label>
+              <div class="settings-row">
+                <input id="set-upload-gb" type="number" min="0.01" max="100" step="0.01" required> <span class="muted">GB per file</span>
+                <button class="btn" type="submit">Save</button>
+              </div>
+              <p class="muted">Larger files are refused before they are uploaded. Applies to new uploads and new versions.</p>
+            </form>
+          </div>
           <div class="panel">
             <h3>Integrity</h3>
             <p class="muted">Re-hash every stored blob against its recorded SHA-256 (digital preservation fixity check).</p>

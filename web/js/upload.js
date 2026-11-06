@@ -1,5 +1,5 @@
 // Upload dialog: file upload and bulk tag import, both by drag and drop or browse.
-import { $, api, errorMessage, esc, notifyCatalogChanged } from "./core.js";
+import { $, api, errorMessage, esc, fmtBytes, notifyCatalogChanged, state } from "./core.js";
 
 const uploadModal = $("#upload-modal");
 let inFlight = 0;  // uploads/imports still running; their rows must not be cleared
@@ -61,6 +61,13 @@ async function uploadFiles(files) {
   inFlight++;
   try {
     for (const file of files) {
+      // Same limit the server enforces; checked here so a huge file fails at once.
+      const limitMb = state.settings.max_upload_mb;
+      if (limitMb && file.size > limitMb * 1024 * 1024) {
+        const row = addRow($("#upload-list"), file.name, `too large (${fmtBytes(file.size)}, limit ${fmtBytes(limitMb * 1024 * 1024)})`);
+        row.classList.add("err"); tally.failed++; renderTally();
+        continue;
+      }
       const row = addRow($("#upload-list"), file.name, "uploading...");
       const fd = new FormData(); fd.append("files", file); fd.append("run_ai", $("#ai-toggle").checked);
       try {
@@ -69,7 +76,7 @@ async function uploadFiles(files) {
         row.classList.add(created.duplicate ? "dup" : "ok");
         row.lastChild.textContent = created.duplicate ? "duplicate (deduped)" : "done";
         tally[created.duplicate ? "dup" : "done"]++;
-      } catch (err) { row.classList.add("err"); row.lastChild.textContent = "failed"; tally.failed++; }
+      } catch (err) { row.classList.add("err"); row.lastChild.textContent = errorMessage(err, "failed"); tally.failed++; }
       renderTally();
     }
   } finally { inFlight--; }

@@ -6,11 +6,12 @@ single-page web client is served from the ``web/`` directory at the root.
 """
 from __future__ import annotations
 
-import io
+import html
 import ipaddress
 import json
 import re
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -26,19 +27,66 @@ from .auth import (OFFERED_ROLES, ROLE_INFO, ROLES, authenticate, hash_password,
                    login_locked, make_token, note_login_failure, note_login_success,
                    role_at_least, verify_password, verify_token)
 from .config import config
-from .db import get_conn, init_db, transaction
+from .db import get_conn, get_setting, init_db, set_setting, transaction
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 
-app = FastAPI(title="Keepstack DAM", version="0.1.0")
+app = FastAPI(title="Keepstack DAM", version="0.1.0",
+              docs_url="/docs" if config.api_docs else None,
+              redoc_url="/redoc" if config.api_docs else None,
+              openapi_url="/openapi.json" if config.api_docs else None)
+
+# No inline scripts and no third-party origins; inline styles stay allowed for
+# the style="" attributes the client sets and the share page's <style>.
+CSP = ("default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+       "img-src 'self' data: blob:; media-src 'self' blob:; object-src 'none'; "
+       "base-uri 'self'; form-action 'self'; frame-ancestors 'none'")
+SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+}
+# The asset upload limit is an admin setting; tag lists are small, so they
+# get a fixed cap.
+TAG_IMPORT_MAX_MB = 50
+MULTIPART_SLACK = 1024 * 1024  # form boundaries and the small text fields
+
+
+def upload_limit_mb() -> int:
+    try:
+        return int(get_setting("max_upload_mb") or config.max_upload_mb)
+    except ValueError:
+        return config.max_upload_mb
+
+
+def _upload_cap(path: str) -> Optional[int]:
+    """Byte limit for an upload route, or None if ``path`` is not one."""
+    if path == "/api/assets" or (path.startswith("/api/assets/") and path.endswith("/versions")):
+        return upload_limit_mb() * 1024 * 1024
+    if path == "/api/tags/import":
+        return TAG_IMPORT_MAX_MB * 1024 * 1024
+    return None
 
 
 @app.middleware("http")
-async def revalidate_web_client(request: Request, call_next):
-    """Make browsers revalidate the web client (index.html, styles.css, js/)
-    on every load. Without a Cache-Control header they may reuse a stale
-    script after an update, pairing new HTML with old code."""
+async def guard_requests(request: Request, call_next):
+    """Refuse oversized uploads before the body is read, and add security
+    headers to every response."""
+    if request.method == "POST":
+        cap = _upload_cap(request.url.path)
+        if cap is not None:
+            length = request.headers.get("content-length", "")
+            if not length.isdigit():
+                return JSONResponse({"detail": "Content-Length required"}, status_code=411)
+            if int(length) > cap + MULTIPART_SLACK:
+                return JSONResponse(
+                    {"detail": f"File too large (limit {cap // (1024 * 1024)} MB)"}, status_code=413)
     response = await call_next(request)
+    for name, value in SECURITY_HEADERS.items():
+        response.headers.setdefault(name, value)
+    response.headers.setdefault("Content-Security-Policy", CSP)
+    # Make browsers revalidate the web client (index.html, styles.css, js/) on
+    # every load, so an update never pairs new HTML with a stale script.
     if not request.url.path.startswith(("/api/", "/iiif/", "/oai", "/s/")):
         response.headers.setdefault("Cache-Control", "no-cache")
     return response
@@ -65,17 +113,35 @@ def _startup() -> None:
 # ---------------------------------------------------------------------------
 # Auth dependencies
 # ---------------------------------------------------------------------------
+SESSION_COOKIE = "keepstack_session"
+# The web client sends this header on every API call. A cross-site page can
+# make the browser send the session cookie but cannot add a custom header
+# without a CORS preflight, which this server never grants (CSRF defence).
+CSRF_HEADER = "X-Requested-With"
+SAFE_METHODS = ("GET", "HEAD", "OPTIONS")
+
+
 def optional_user(request: Request) -> Optional[dict]:
+    """The signed-in user from an API token (Authorization: Bearer) or the
+    browser's HttpOnly session cookie, or None."""
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return None
-    payload = verify_token(auth[7:])
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    else:
+        token = request.cookies.get(SESSION_COOKIE)
+        if not token:
+            return None
+        if request.method not in SAFE_METHODS and request.headers.get(CSRF_HEADER) != "keepstack":
+            raise HTTPException(403, "Missing CSRF header")
+    payload = verify_token(token)
     if not payload:
         return None
     row = get_conn().execute(
         "SELECT * FROM users WHERE id = ? AND is_active = 1", (payload["sub"],)
     ).fetchone()
-    return dict(row) if row else None
+    if not row or row["token_version"] != payload.get("v", 0):
+        return None  # revoked: the password changed after the token was issued
+    return dict(row)
 
 
 def require_user(request: Request) -> dict:
@@ -149,7 +215,27 @@ def login(request: Request, body: dict = Body(...)):
     get_conn().execute("UPDATE users SET last_login = ? WHERE id = ?", (now_iso(), user["id"]))
     get_conn().commit()
     log("login.success", user=user, ip=ip)
-    return {"token": make_token(user["id"], user["role"]), "user": _user_public(user)}
+    token = make_token(user["id"], user["role"], user["token_version"])
+    # Browsers use the HttpOnly cookie (script cannot read it); the token in
+    # the body is for API clients that send Authorization: Bearer.
+    response = JSONResponse({"token": token, "user": _user_public(user)})
+    response.set_cookie(SESSION_COOKIE, token, max_age=config.token_ttl_hours * 3600,
+                        httponly=True, samesite="lax", secure=config.cookie_secure, path="/")
+    return response
+
+
+@app.post("/api/auth/logout")
+def logout(request: Request):
+    try:
+        user = optional_user(request)
+    except HTTPException:
+        user = None
+    if user:
+        log("logout", user=user, ip=client_ip(request))
+    response = JSONResponse({"ok": True})
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True, samesite="lax",
+                           secure=config.cookie_secure)
+    return response
 
 
 @app.get("/api/auth/me")
@@ -197,8 +283,11 @@ def _user_public(u: dict) -> dict:
 # ---------------------------------------------------------------------------
 # Assets
 # ---------------------------------------------------------------------------
+# Upload handlers are plain functions so ingest (hashing, thumbnails, OCR) runs
+# in the threadpool instead of blocking the event loop, and they stream the
+# spooled upload into storage rather than reading it into memory.
 @app.post("/api/assets")
-async def upload_assets(
+def upload_assets(
     request: Request,
     files: list[UploadFile] = File(...),
     run_ai: bool = Form(True),
@@ -206,9 +295,7 @@ async def upload_assets(
 ):
     results = []
     for f in files:
-        data = await f.read()
-        asset = ingest.ingest_stream(io.BytesIO(data), f.filename or "upload.bin",
-                                     user=user, run_ai=run_ai)
+        asset = ingest.ingest_stream(f.file, f.filename or "upload.bin", user=user, run_ai=run_ai)
         if not asset.get("duplicate"):
             log("asset.create", user=user, target_type="asset", target_id=asset["uuid"],
                 detail=asset["filename"], ip=client_ip(request))
@@ -290,17 +377,21 @@ def bulk_assets(request: Request, body: dict = Body(...), user: dict = Depends(r
 def list_assets(
     q: str = "",
     media_type: Optional[str] = None,
-    tag: Optional[str] = None,
+    tag: list[str] = Query([]),
+    not_tag: list[str] = Query([]),
+    tag_match: str = Query("all", pattern="^(all|any)$"),
     collection_id: Optional[int] = None,
     status: str = "active",
-    sort: str = "newest",
+    sort: str = search.DEFAULT_SORT,
     mode: str = "keyword",
     limit: int = Query(60, le=500),
     offset: int = 0,
     user: dict = Depends(require_user),
 ):
-    return search.search(q=q, media_type=media_type, tag=tag, collection_id=collection_id,
-                         status=status, sort=sort, mode=mode, limit=limit, offset=offset)
+    # ?tag=a&tag=b (must have), ?not_tag=c (must not have), tag_match=all|any
+    return search.search(q=q, media_type=media_type, tags=tag[:50], not_tags=not_tag[:50],
+                         tag_match=tag_match, collection_id=collection_id, status=status,
+                         sort=sort, mode=mode, limit=limit, offset=offset)
 
 
 def _get_asset_or_404(uuid: str) -> dict:
@@ -377,24 +468,29 @@ def asset_file(uuid: str, user: dict = Depends(require_user)):
     return FileResponse(path, media_type=a["mime_type"], filename=a["filename"])
 
 
+# Renditions are loaded by <img> tags, which send the session cookie. Only the
+# browser may cache them ("private"), never a shared proxy.
+RENDITION_CACHE = {"Cache-Control": "private, max-age=3600"}
+
+
 @app.get("/api/assets/{uuid}/thumb")
-def asset_thumb(uuid: str):
+def asset_thumb(uuid: str, user: dict = Depends(require_user)):
     a = _get_asset_or_404(uuid)
     key = a["thumb_key"] or thumbnails.ensure_thumbnail(
         a["sha256"], a["storage_key"], a["media_type"], a["ext"])
     path = storage.thumb_path(key)
     if not path.exists():
         thumbnails.ensure_thumbnail(a["sha256"], a["storage_key"], a["media_type"], a["ext"])
-    return FileResponse(path, media_type="image/jpeg")
+    return FileResponse(path, media_type="image/jpeg", headers=RENDITION_CACHE)
 
 
 @app.get("/api/assets/{uuid}/preview")
-def asset_preview(uuid: str, size: int = Query(1600, le=4000)):
+def asset_preview(uuid: str, size: int = Query(1600, le=4000), user: dict = Depends(require_user)):
     a = _get_asset_or_404(uuid)
     data = thumbnails.rendition(a["sha256"], a["storage_key"], a["media_type"], a["ext"], size)
     if data is None:
-        return asset_thumb(uuid)
-    return Response(content=data, media_type="image/jpeg")
+        return asset_thumb(uuid, user)
+    return Response(content=data, media_type="image/jpeg", headers=RENDITION_CACHE)
 
 
 @app.get("/api/assets/{uuid}/similar")
@@ -433,12 +529,11 @@ def remove_tag(uuid: str, name: str, user: dict = Depends(require_role("contribu
 
 
 @app.post("/api/assets/{uuid}/versions")
-async def add_version(uuid: str, request: Request, file: UploadFile = File(...),
-                      note: str = Form(""), user: dict = Depends(require_role("editor"))):
+def add_version(uuid: str, request: Request, file: UploadFile = File(...),
+                note: str = Form(""), user: dict = Depends(require_role("editor"))):
     a = _get_asset_or_404(uuid)
-    data = await file.read()
     ext = (file.filename or "").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else a["ext"]
-    sha, key, size = storage.store_bytes(data, ext)
+    sha, key, size = storage.store_stream(file.file, ext)
     conn = get_conn()
     last = conn.execute("SELECT COALESCE(MAX(version_no),0) m FROM asset_versions WHERE asset_id = ?",
                         (a["id"],)).fetchone()["m"]
@@ -476,16 +571,19 @@ def asset_metadata(uuid: str, user: dict = Depends(require_user)):
 # ---------------------------------------------------------------------------
 @app.get("/api/tags")
 def list_tags(user: dict = Depends(require_user)):
+    # Counts only active assets, matching what a tag filter would return.
     rows = get_conn().execute(
-        "SELECT t.name, COUNT(at.asset_id) c FROM tags t "
-        "LEFT JOIN asset_tags at ON at.tag_id = t.id GROUP BY t.name ORDER BY c DESC, t.name").fetchall()
+        "SELECT t.name, COUNT(a.id) c FROM tags t "
+        "LEFT JOIN asset_tags at ON at.tag_id = t.id "
+        "LEFT JOIN assets a ON a.id = at.asset_id AND a.status = 'active' "
+        "GROUP BY t.name ORDER BY c DESC, t.name").fetchall()
     return {"tags": [dict(r) for r in rows]}
 
 
 @app.post("/api/tags/import")
-async def import_tags(request: Request, file: UploadFile = File(...),
-                      user: dict = Depends(require_role("contributor"))):
-    data = await file.read()
+def import_tags(request: Request, file: UploadFile = File(...),
+                user: dict = Depends(require_role("contributor"))):
+    data = file.file.read()
     try:
         entries = tagimport.parse(data, file.filename or "")
     except Exception as exc:
@@ -567,36 +665,66 @@ def remove_from_collection(cid: int, uuid: str, user: dict = Depends(require_rol
 def create_share(request: Request, body: dict = Body(...),
                  user: dict = Depends(require_role("contributor"))):
     import secrets
+    if body.get("target_type", "asset") != "asset":
+        raise HTTPException(400, "Only assets can be shared")
+    permission = body.get("permission", "view")
+    if permission not in ("view", "download"):
+        raise HTTPException(400, "Permission must be view or download")
+    max_downloads = body.get("max_downloads")
+    if max_downloads is not None and (isinstance(max_downloads, bool)
+                                      or not isinstance(max_downloads, int) or max_downloads < 1):
+        raise HTTPException(400, "max_downloads must be a positive number")
+    expires_at = body.get("expires_at")
+    if expires_at:
+        try:
+            exp = datetime.fromisoformat(expires_at)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "expires_at must be an ISO 8601 date")
+        # stored in the same form as now_iso() so the expiry check compares strings
+        expires_at = (exp if exp.tzinfo else exp.replace(tzinfo=timezone.utc)).astimezone(timezone.utc).isoformat()
+    asset = get_conn().execute("SELECT uuid FROM assets WHERE id = ? AND status = 'active'",
+                               (body.get("target_id"),)).fetchone()
+    if not asset:
+        raise HTTPException(404, "Asset not found")
     token = secrets.token_urlsafe(16)
     with transaction() as conn:
         conn.execute(
             "INSERT INTO share_links (token, target_type, target_id, permission, expires_at, "
             "max_downloads, created_by, created_at) VALUES (?,?,?,?,?,?,?,?)",
-            (token, body.get("target_type", "asset"), body["target_id"],
-             body.get("permission", "view"), body.get("expires_at"),
-             body.get("max_downloads"), user["id"], now_iso()))
-    log("share.create", user=user, target_type=body.get("target_type"), target_id=body["target_id"])
+            (token, "asset", body["target_id"], permission, expires_at,
+             max_downloads, user["id"], now_iso()))
+    log("share.create", user=user, target_type="asset", target_id=asset["uuid"],
+        ip=client_ip(request))
     return {"token": token, "url": f"{config.base_url}/s/{token}"}
 
 
 @app.get("/api/shares")
 def list_shares(user: dict = Depends(require_role("contributor"))):
+    # Contributors manage their own links; editors and admins see all of them.
+    mine_only = not role_at_least(user["role"], "editor")
     rows = get_conn().execute(
         "SELECT id, token, target_type, target_id, permission, expires_at, "
-        "download_count, max_downloads, revoked, created_at FROM share_links "
-        "WHERE revoked = 0 ORDER BY created_at DESC").fetchall()
+        "download_count, max_downloads, revoked, created_by, created_at FROM share_links "
+        "WHERE revoked = 0" + (" AND created_by = ?" if mine_only else "") +
+        " ORDER BY created_at DESC", (user["id"],) if mine_only else ()).fetchall()
     return {"shares": [dict(r) for r in rows]}
 
 
 @app.delete("/api/shares/{sid}")
-def revoke_share(sid: int, user: dict = Depends(require_role("contributor"))):
+def revoke_share(sid: int, request: Request, user: dict = Depends(require_role("contributor"))):
     with transaction() as conn:
+        row = conn.execute("SELECT created_by FROM share_links WHERE id = ?", (sid,)).fetchone()
+        if not row:
+            raise HTTPException(404, "Share link not found")
+        if row["created_by"] != user["id"] and not role_at_least(user["role"], "editor"):
+            raise HTTPException(403, "You can only revoke your own share links")
         conn.execute("UPDATE share_links SET revoked = 1 WHERE id = ?", (sid,))
-    log("share.revoke", user=user, target_type="share", target_id=sid)
+    log("share.revoke", user=user, target_type="share", target_id=sid, ip=client_ip(request))
     return {"ok": True}
 
 
-def _valid_share(token: str) -> dict:
+def _valid_share(token: str) -> tuple[dict, dict]:
+    """The share link and its asset, while the link is usable."""
     row = get_conn().execute("SELECT * FROM share_links WHERE token = ? AND revoked = 0",
                              (token,)).fetchone()
     if not row:
@@ -606,36 +734,39 @@ def _valid_share(token: str) -> dict:
         raise HTTPException(410, "Link expired")
     if s["max_downloads"] and s["download_count"] >= s["max_downloads"]:
         raise HTTPException(410, "Download limit reached")
-    return s
+    a = get_conn().execute("SELECT * FROM assets WHERE id = ? AND status = 'active'",
+                           (s["target_id"],)).fetchone()
+    if not a:
+        raise HTTPException(404, "Asset unavailable")
+    return s, dict(a)
 
 
 @app.get("/s/{token}", response_class=HTMLResponse)
 def public_share(token: str):
-    s = _valid_share(token)
-    a = get_conn().execute("SELECT * FROM assets WHERE id = ?", (s["target_id"],)).fetchone()
-    if not a:
-        raise HTTPException(404, "Asset unavailable")
-    a = dict(a)
+    s, a = _valid_share(token)
     can_dl = s["permission"] == "download"
     dl = (f'<a class="btn" href="/s/{token}/file">Download original</a>' if can_dl else "")
+    # Titles and descriptions are user input: escape everything from the catalog.
+    title = html.escape(a["title"] or a["filename"] or "")
+    alt = html.escape(a.get("alt_text") or a["title"] or "")
+    desc = html.escape(a.get("description") or "")
     return f"""<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{a['title']} - Shared via Keepstack</title>
+<title>{title} - Shared via Keepstack</title>
 <style>body{{margin:0;font-family:system-ui,sans-serif;background:#f4f6fa;color:#1d2433;
 display:flex;flex-direction:column;align-items:center;gap:24px;padding:48px 16px}}
 img{{max-width:min(900px,92vw);border-radius:12px;border:1px solid #dde3ec}}
 .btn{{background:#4d68d6;color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none}}
 .muted{{color:#64708a}}</style></head>
-<body><h2>{a['title']}</h2>
-<img src="/s/{token}/preview" alt="{a.get('alt_text') or a['title']}">
-<p class="muted">{a.get('description') or ''}</p>{dl}
+<body><h2>{title}</h2>
+<img src="/s/{token}/preview" alt="{alt}">
+<p class="muted">{desc}</p>{dl}
 <p class="muted">Shared securely via Keepstack</p></body></html>"""
 
 
 @app.get("/s/{token}/preview")
 def public_share_preview(token: str):
-    s = _valid_share(token)
-    a = dict(get_conn().execute("SELECT * FROM assets WHERE id = ?", (s["target_id"],)).fetchone())
+    s, a = _valid_share(token)
     data = thumbnails.rendition(a["sha256"], a["storage_key"], a["media_type"], a["ext"], 1600)
     if data is None:
         key = a["thumb_key"]
@@ -645,10 +776,9 @@ def public_share_preview(token: str):
 
 @app.get("/s/{token}/file")
 def public_share_file(token: str, request: Request):
-    s = _valid_share(token)
+    s, a = _valid_share(token)
     if s["permission"] != "download":
         raise HTTPException(403, "Download not permitted")
-    a = dict(get_conn().execute("SELECT * FROM assets WHERE id = ?", (s["target_id"],)).fetchone())
     with transaction() as conn:
         conn.execute("UPDATE share_links SET download_count = download_count + 1 WHERE id = ?", (s["id"],))
     log("share.download", target_type="asset", target_id=a["uuid"], detail=token, ip=client_ip(request))
@@ -676,9 +806,33 @@ def stats(user: dict = Depends(require_user)):
             "tags": tags, "collections": cols, "dedup_saved_bytes": dup}
 
 
+UPLOAD_LIMIT_RANGE_MB = (1, 100 * 1024)
+
+
+@app.get("/api/settings")
+def get_settings(user: dict = Depends(require_user)):
+    # Every signed-in user reads these: the upload dialog checks sizes up front.
+    return {"max_upload_mb": upload_limit_mb()}
+
+
+@app.patch("/api/settings")
+def update_settings(request: Request, body: dict = Body(...),
+                    user: dict = Depends(require_role("admin"))):
+    if "max_upload_mb" in body:
+        lo, hi = UPLOAD_LIMIT_RANGE_MB
+        value = body["max_upload_mb"]
+        if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
+            raise HTTPException(400, f"Upload limit must be a whole number of MB between {lo} and {hi}")
+        set_setting("max_upload_mb", str(value))
+        log("settings.update", user=user, detail=f"max_upload_mb={value}", ip=client_ip(request))
+    return get_settings(user)
+
+
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._@-]{3,64}$")
 MIN_PASSWORD = 8
 _USER_COLS = "id, username, email, full_name, role, is_active, created_at, last_login"
+# Plus the columns handlers need but the API never returns.
+_USER_INTERNAL_COLS = _USER_COLS + ", token_version"
 
 
 @app.get("/api/roles")
@@ -723,8 +877,8 @@ def _guard_admins(conn, uid: int, acting: dict, *, role: Optional[str], active: 
         raise HTTPException(400, "At least one active administrator must remain")
 
 
-def _get_user_or_404(conn, uid: int) -> dict:
-    row = conn.execute(f"SELECT {_USER_COLS} FROM users WHERE id = ?", (uid,)).fetchone()
+def _get_user_or_404(conn, uid: int, cols: str = _USER_COLS) -> dict:
+    row = conn.execute(f"SELECT {cols} FROM users WHERE id = ?", (uid,)).fetchone()
     if not row:
         raise HTTPException(404, "User not found")
     return dict(row)
@@ -763,15 +917,18 @@ def update_user(uid: int, request: Request, body: dict = Body(...),
                 user: dict = Depends(require_role("admin"))):
     fields = _clean_user_fields(body)
     with transaction() as conn:
-        current = _get_user_or_404(conn, uid)
+        current = _get_user_or_404(conn, uid, _USER_INTERNAL_COLS)
         new_role = fields.get("role", current["role"])
         new_active = bool(fields.get("is_active", current["is_active"]))
         if current["role"] == "admin" and current["is_active"]:
             _guard_admins(conn, uid, user, role=new_role, active=new_active)
+        if "password_hash" in fields:
+            fields["token_version"] = current["token_version"] + 1  # sign out everywhere
         if fields:
             conn.execute(f"UPDATE users SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
                          [*fields.values(), uid])
-    changed = ", ".join(k if k != "password_hash" else "password" for k in fields)
+    changed = ", ".join(k if k != "password_hash" else "password"
+                        for k in fields if k != "token_version")
     log("user.update", user=user, target_type="user", target_id=current["username"],
         detail=changed, ip=client_ip(request))
     return _get_user_or_404(get_conn(), uid)
@@ -847,19 +1004,26 @@ def fixity_check(user: dict = Depends(require_role("admin"))):
 # ---------------------------------------------------------------------------
 # Open standards: OAI-PMH + IIIF
 # ---------------------------------------------------------------------------
-@app.get("/oai")
+def standards_access(request: Request) -> None:
+    """OAI-PMH and IIIF are open to harvesters and viewers only when
+    KEEPSTACK_PUBLIC_API is on; otherwise they need a signed-in user."""
+    if not config.public_api:
+        require_user(request)
+
+
+@app.get("/oai", dependencies=[Depends(standards_access)])
 def oai(request: Request):
     body, status = standards.oai_response(dict(request.query_params))
     return Response(content=body, media_type="application/xml", status_code=status)
 
 
-@app.get("/iiif/3/{uuid}/info.json")
+@app.get("/iiif/3/{uuid}/info.json", dependencies=[Depends(standards_access)])
 def iiif_info(uuid: str):
     a = _get_asset_or_404(uuid)
     return JSONResponse(standards.iiif_info(a))
 
 
-@app.get("/iiif/3/{uuid}/manifest.json")
+@app.get("/iiif/3/{uuid}/manifest.json", dependencies=[Depends(standards_access)])
 def iiif_manifest(uuid: str):
     a = _get_asset_or_404(uuid)
     if a["media_type"] != "image":
@@ -867,7 +1031,7 @@ def iiif_manifest(uuid: str):
     return JSONResponse(standards.iiif_manifest(a))
 
 
-@app.get("/iiif/3/{uuid}/{region}/{size}/{rotation}/{quality}.{fmt}")
+@app.get("/iiif/3/{uuid}/{region}/{size}/{rotation}/{quality}.{fmt}", dependencies=[Depends(standards_access)])
 def iiif_image(uuid: str, region: str, size: str, rotation: str, quality: str, fmt: str):
     a = _get_asset_or_404(uuid)
     if fmt.lower() not in ("jpg", "jpeg"):

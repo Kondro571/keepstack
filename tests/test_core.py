@@ -618,3 +618,129 @@ def test_bulk_actions_tag_collect_untag_delete_and_roles():
 
     assert bulk_assets(_req(), {"action": "delete", "uuids": both}, admin)["changed"] == 2
     assert search.search(collection_id=cid)["total"] == 0
+
+
+def _http(method="GET", headers=None, cookies=None):
+    import types
+    return types.SimpleNamespace(client=types.SimpleNamespace(host="127.0.0.1"), method=method,
+                                 headers=headers or {}, cookies=cookies or {})
+
+
+def test_session_cookie_needs_csrf_header_and_password_change_revokes_tokens():
+    from fastapi import HTTPException
+    from keepstack.app import SESSION_COOKIE, _startup, create_user, optional_user, update_user
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+    u = create_user(_req(), {"username": "sessionuser", "password": "longenough"}, admin)
+    tok = make_token(u["id"], u["role"], 0)
+
+    assert optional_user(_http(headers={"Authorization": "Bearer " + tok}))["id"] == u["id"]
+    assert optional_user(_http(cookies={SESSION_COOKIE: tok}))["id"] == u["id"]
+    with pytest.raises(HTTPException) as e:                       # cookie POST without the header
+        optional_user(_http("POST", cookies={SESSION_COOKIE: tok}))
+    assert e.value.status_code == 403
+    assert optional_user(_http("POST", headers={"X-Requested-With": "keepstack"},
+                               cookies={SESSION_COOKIE: tok}))["id"] == u["id"]
+
+    update_user(u["id"], _req(), {"full_name": "Renamed"}, admin)
+    assert optional_user(_http(cookies={SESSION_COOKIE: tok}))         # other edits keep sessions
+    update_user(u["id"], _req(), {"password": "brand-new-pass"}, admin)
+    assert optional_user(_http(cookies={SESSION_COOKIE: tok})) is None
+    assert optional_user(_http(cookies={SESSION_COOKIE: make_token(u["id"], u["role"], 1)}))
+
+
+def test_renditions_and_standards_endpoints_require_login():
+    from keepstack.app import app, require_user, standards_access
+    deps = {r.path: [d.call for d in r.dependant.dependencies]
+            for r in app.routes if hasattr(r, "dependant")}
+    for path in ("/api/assets/{uuid}/thumb", "/api/assets/{uuid}/preview", "/api/assets/{uuid}/file"):
+        assert require_user in deps[path], path
+    for path in ("/oai", "/iiif/3/{uuid}/info.json", "/iiif/3/{uuid}/manifest.json"):
+        assert standards_access in deps[path], path
+    from fastapi import HTTPException
+    with pytest.raises(HTTPException) as e:
+        standards_access(_http())
+    assert e.value.status_code == 401
+
+
+def test_share_page_escapes_and_links_belong_to_their_creator():
+    from fastapi import HTTPException
+    from keepstack.app import (_startup, create_share, list_shares, public_share, revoke_share)
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+    alice = {**admin, "id": 9001, "role": "contributor"}
+    bob = {**admin, "id": 9002, "role": "contributor"}
+    a = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(5, 6, 7))), "share-xss.jpg")
+    with get_conn() as conn:
+        conn.execute("UPDATE assets SET title = ?, description = ? WHERE uuid = ?",
+                     ('<img src=x onerror=alert(1)>', '"><script>x()</script>', a["uuid"]))
+    aid = get_conn().execute("SELECT id FROM assets WHERE uuid = ?", (a["uuid"],)).fetchone()["id"]
+
+    with pytest.raises(HTTPException):
+        create_share(_req(), {"target_id": 99999999}, alice)
+    with pytest.raises(HTTPException):
+        create_share(_req(), {"target_id": aid, "permission": "admin"}, alice)
+    tok = create_share(_req(), {"target_id": aid, "permission": "download"}, alice)["token"]
+    page = public_share(tok)
+    assert "<img src=x" not in page and "<script>" not in page and "&lt;img src=x" in page
+
+    sid = next(s["id"] for s in list_shares(alice)["shares"] if s["token"] == tok)
+    assert all(s["token"] != tok for s in list_shares(bob)["shares"])
+    assert any(s["token"] == tok for s in list_shares(admin)["shares"])
+    with pytest.raises(HTTPException) as e:
+        revoke_share(sid, _req(), bob)
+    assert e.value.status_code == 403
+
+    with get_conn() as conn:                                 # deleting the asset kills the link
+        conn.execute("UPDATE assets SET status = 'deleted' WHERE id = ?", (aid,))
+    with pytest.raises(HTTPException) as e:
+        public_share(tok)
+    assert e.value.status_code == 404
+    revoke_share(sid, _req(), alice)
+
+
+def test_upload_limit_setting():
+    from fastapi import HTTPException
+    from keepstack.app import _startup, _upload_cap, get_settings, update_settings, upload_limit_mb
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+    assert get_settings(admin)["max_upload_mb"] == upload_limit_mb()
+    for bad in (0, -5, "100", 1.5, True, 10**9):
+        with pytest.raises(HTTPException):
+            update_settings(_req(), {"max_upload_mb": bad}, admin)
+    assert update_settings(_req(), {"max_upload_mb": 2048}, admin)["max_upload_mb"] == 2048
+    assert _upload_cap("/api/assets") == 2048 * 1024 * 1024
+    assert _upload_cap("/api/assets/abc/versions") == 2048 * 1024 * 1024
+    assert _upload_cap("/api/tags/import") == 50 * 1024 * 1024
+    assert _upload_cap("/api/assets/bulk") is None
+    update_settings(_req(), {"max_upload_mb": 3072}, admin)
+
+
+def test_tag_filters_include_exclude_and_list_sorts():
+    from keepstack.app import _startup, bulk_assets
+    _startup()
+    admin = dict(get_conn().execute("SELECT * FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone())
+    a = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(1, 90, 1), size=(50, 40))), "tf-a.jpg")
+    b = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(90, 1, 1), size=(500, 400))), "tf-b.jpg")
+    c = ingest.ingest_stream(io.BytesIO(_img_bytes(color=(1, 1, 90), size=(200, 100))), "tf-c.jpg")
+    tag = lambda name, *assets: bulk_assets(_req(), {"action": "tag", "tag": name,
+                                                     "uuids": [x["uuid"] for x in assets]}, admin)
+    tag("tf-red", a, b); tag("tf-sea", b, c); tag("tf-old", c)
+    found = lambda **kw: {i["uuid"] for i in search.search(limit=500, **kw)["items"]}
+
+    assert found(tags=["tf-red", "tf-sea"]) == {b["uuid"]}                      # all
+    assert found(tags=["tf-red", "TF-Sea"], tag_match="any") == {a["uuid"], b["uuid"], c["uuid"]}
+    assert found(tags=["tf-sea"], not_tags=["tf-old"]) == {b["uuid"]}
+    assert found(tags=["tf-red"], not_tags=["tf-sea", "tf-old"]) == {a["uuid"]}
+    assert found(tag="tf-red", tags=["tf-sea"]) == {b["uuid"]}                  # old param still works
+    assert search.search(tags=["tf-red"], not_tags=["tf-red"])["total"] == 0
+
+    order = lambda sort: [i["uuid"] for i in search.search(tags=["tf-red", "tf-sea"], tag_match="any",
+                                                            sort=sort, limit=10)["items"]]
+    assert order("dims_desc") == [b["uuid"], c["uuid"], a["uuid"]]
+    assert order("dims") == order("dims_desc")[::-1]
+    assert order("name_desc") == order("name")[::-1]
+    assert order("smallest") == order("largest")[::-1]
+    assert set(order("type")) == {a["uuid"], b["uuid"], c["uuid"]}
+    # an explicit sort applies to full-text results too; "relevance" ranks them
+    assert len(search.search(q="tf", sort="name")["items"]) == len(search.search(q="tf")["items"])

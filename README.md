@@ -118,6 +118,9 @@ is discoverable and your data is never trapped.
 | `GET /api/assets/{uuid}` (includes `dublin_core`) | Dublin Core |
 | `GET /api/...` | Full REST API for every resource |
 
+OAI-PMH and IIIF require a signed-in user unless `KEEPSTACK_PUBLIC_API=true`,
+which opens them to external harvesters and viewers (images included).
+
 </details>
 
 <details>
@@ -132,6 +135,10 @@ All configuration is environment-driven with safe local defaults.
 | `KEEPSTACK_ADMIN_USER` / `KEEPSTACK_ADMIN_PASSWORD` | `admin` / `admin` | Bootstrap admin, created once |
 | `KEEPSTACK_PORT` | `8000` | HTTP port |
 | `KEEPSTACK_TRUSTED_PROXIES` | unset | Comma-separated proxy IPs/CIDRs whose `X-Forwarded-For` to trust |
+| `KEEPSTACK_BASE_URL` | `http://localhost:8000` | Public URL; `https://` also marks the session cookie `Secure` |
+| `KEEPSTACK_MAX_UPLOAD_MB` | `3072` | Default upload limit; an admin can change it in the dashboard |
+| `KEEPSTACK_PUBLIC_API` | `false` | Serve OAI-PMH and IIIF without signing in |
+| `KEEPSTACK_API_DOCS` | `false` | Serve the interactive API docs at `/docs` |
 | `KEEPSTACK_OCR_ENABLED` | `true` | OCR images with Tesseract when the binary is installed |
 | `KEEPSTACK_AI_ENABLED` | `false` | Turn on provider-backed AI |
 | `GROQ_API_KEY` | unset | Optional: vision tagging / captioning / alt-text |
