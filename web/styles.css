@@ -105,7 +105,15 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
 
 .facets { display: flex; flex-direction: column; gap: var(--s4); }
-.facet-group h4 { margin: 0 0 var(--s2); font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.facet-group summary {
+  display: flex; align-items: center; gap: var(--s1); margin: 0 0 var(--s2); cursor: pointer; user-select: none; list-style: none;
+  font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+}
+.facet-group summary::-webkit-details-marker { display: none; }
+.facet-group summary::before { content: "\25B8"; display: inline-block; transition: transform .15s; }
+.facet-group[open] summary::before { transform: rotate(90deg); }
+.facet-group summary:hover { color: var(--text); }
+.facet-group:not([open]) summary { margin-bottom: 0; }
 .facet-group ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .facet-group li {
   display: flex; justify-content: space-between; padding: var(--s1) var(--s2); border-radius: var(--radius-sm);
@@ -216,7 +224,6 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .collection-card { background: var(--base-1); border: 1px solid var(--base-3); border-radius: var(--radius); padding: var(--s3); cursor: pointer; display: flex; flex-direction: column; gap: var(--s1); }
 .collection-card:hover { border-color: var(--accent); }
 .collection-card .n { font-weight: 600; }
-
 /* ---------- toast ---------- */
 .toast {
   position: fixed; bottom: var(--s4); left: 50%; transform: translateX(-50%);

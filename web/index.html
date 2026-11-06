@@ -56,14 +56,14 @@
         </nav>
 
         <div id="facets" class="facets">
-          <div class="facet-group">
-            <h4>Media type</h4>
+          <details class="facet-group" data-group="media" open>
+            <summary>Media type</summary>
             <ul id="facet-media"></ul>
-          </div>
-          <div class="facet-group">
-            <h4>Top tags</h4>
+          </details>
+          <details class="facet-group" data-group="tags" open>
+            <summary>Top tags</summary>
             <ul id="facet-tags"></ul>
-          </div>
+          </details>
         </div>
       </aside>
 
@@ -90,8 +90,7 @@
             <h2>Collections</h2>
             <button id="btn-new-collection" class="btn">New collection</button>
           </div>
-          <div id="collection-list" class="collection-list"></div>
-        </div>
+          <div id="collection-list" class="collection-list"></div>        </div>
 
         <div id="view-dashboard" class="view hidden">
           <div class="view-head"><h2>Dashboard</h2></div>

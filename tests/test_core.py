@@ -467,3 +467,16 @@ def test_tag_import_xlsx_shared_and_inline_strings():
 def test_tag_import_rejects_unknown_format():
     with pytest.raises(ValueError):
         tagimport.parse(b"x", "tags.json")
+
+
+def test_user_preferences_merge_and_persist():
+    from fastapi import HTTPException
+    from keepstack.app import _startup, get_preferences, update_preferences
+    _startup()
+    user = dict(get_conn().execute("SELECT * FROM users ORDER BY id LIMIT 1").fetchone())
+    assert get_preferences(user) == {}
+    update_preferences({"facets_closed": ["tags"]}, user)
+    update_preferences({"other": 1}, user)
+    assert get_preferences(user) == {"facets_closed": ["tags"], "other": 1}
+    with pytest.raises(HTTPException):
+        update_preferences({"big": "x" * 10000}, user)

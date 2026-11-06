@@ -34,6 +34,13 @@ CREATE TABLE IF NOT EXISTS users (
     last_login    TEXT
 );
 
+-- Per-user UI state (e.g. which sidebar groups are collapsed), as JSON.
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id    INTEGER PRIMARY KEY,
+    prefs_json TEXT NOT NULL DEFAULT '{}',
+    FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+);
+
 CREATE TABLE IF NOT EXISTS assets (
     id                INTEGER PRIMARY KEY,
     uuid              TEXT UNIQUE NOT NULL,

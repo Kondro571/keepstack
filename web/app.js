@@ -40,7 +40,7 @@ function enterApp() {
   $("#user-label").textContent = `${state.user.username} (${state.user.role})`;
   const isAdmin = state.user.role === "admin";
   $$(".admin-only").forEach(el => el.classList.toggle("hidden", !isAdmin));
-  loadLibrary();
+  loadFacetPrefs(); loadLibrary();
 }
 
 // ---------- navigation ----------
@@ -98,6 +98,24 @@ function renderFacets(facets) {
   $$("#facet-media li").forEach(li => li.addEventListener("click", () => { state.media = state.media===li.dataset.media?null:li.dataset.media; loadLibrary(); }));
   $$("#facet-tags li").forEach(li => li.addEventListener("click", () => { state.tag = state.tag===li.dataset.tag?null:li.dataset.tag; loadLibrary(); }));
 }
+
+// Collapsed facet groups are stored per user on the server, so they follow
+// the account across refreshes and browsers.
+let closedFacets = [];
+const currentClosedFacets = () => $$(".facet-group[data-group]").filter(x => !x.open).map(x => x.dataset.group);
+async function loadFacetPrefs() {
+  try { closedFacets = (await api("/api/auth/me/preferences")).facets_closed || []; } catch { closedFacets = []; }
+  $$(".facet-group[data-group]").forEach(g => { g.open = !closedFacets.includes(g.dataset.group); });
+}
+$$(".facet-group[data-group]").forEach(g => {
+  // toggle also fires (async) for programmatic changes; only save real differences
+  g.addEventListener("toggle", () => {
+    const now = currentClosedFacets();
+    if (!state.user || now.join() === closedFacets.join()) return;
+    closedFacets = now;
+    api("/api/auth/me/preferences", { method: "PATCH", json: { facets_closed: now } }).catch(() => {});
+  });
+});
 
 // ---------- asset detail drawer ----------
 const drawer = $("#drawer");

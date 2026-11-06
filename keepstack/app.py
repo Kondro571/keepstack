@@ -144,6 +144,38 @@ def me(user: dict = Depends(require_user)):
     return _user_public(user)
 
 
+PREFS_MAX_BYTES = 8192
+
+
+def _load_prefs(user_id: int) -> dict:
+    row = get_conn().execute(
+        "SELECT prefs_json FROM user_preferences WHERE user_id = ?", (user_id,)).fetchone()
+    try:
+        return json.loads(row["prefs_json"]) if row else {}
+    except ValueError:
+        return {}
+
+
+@app.get("/api/auth/me/preferences")
+def get_preferences(user: dict = Depends(require_user)):
+    return _load_prefs(user["id"])
+
+
+@app.patch("/api/auth/me/preferences")
+def update_preferences(body: dict = Body(...), user: dict = Depends(require_user)):
+    """Merge the given keys into the user's stored UI preferences."""
+    prefs = {**_load_prefs(user["id"]), **body}
+    data = json.dumps(prefs)
+    if len(data) > PREFS_MAX_BYTES:
+        raise HTTPException(413, "Preferences too large")
+    with transaction() as conn:
+        conn.execute(
+            "INSERT INTO user_preferences (user_id, prefs_json) VALUES (?, ?) "
+            "ON CONFLICT(user_id) DO UPDATE SET prefs_json = excluded.prefs_json",
+            (user["id"], data))
+    return prefs
+
+
 def _user_public(u: dict) -> dict:
     return {"id": u["id"], "username": u["username"], "email": u["email"],
             "full_name": u["full_name"], "role": u["role"]}
