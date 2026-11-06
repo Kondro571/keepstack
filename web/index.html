@@ -48,11 +48,11 @@
     <div class="layout">
       <aside class="sidebar">
         <nav class="nav">
-          <button class="nav-item active" data-view="library">Library</button>
-          <button class="nav-item" data-view="collections">Collections</button>
-          <button class="nav-item admin-only" data-view="dashboard">Dashboard</button>
-          <button class="nav-item admin-only" data-view="users">Users</button>
-          <button class="nav-item admin-only" data-view="audit">Audit log</button>
+          <a class="nav-item active" href="/library" data-view="library">Library</a>
+          <a class="nav-item" href="/collections" data-view="collections">Collections</a>
+          <a class="nav-item admin-only" href="/dashboard" data-view="dashboard">Dashboard</a>
+          <a class="nav-item admin-only" href="/users" data-view="users">Users</a>
+          <a class="nav-item admin-only" href="/audit" data-view="audit">Audit log</a>
         </nav>
 
         <div id="facets" class="facets">
@@ -78,6 +78,12 @@
                 <option value="oldest">Oldest</option>
                 <option value="name">Name</option>
                 <option value="largest">Largest</option>
+              </select>
+              <select id="page-size" title="Items per page">
+                <option value="10">10 per page</option>
+                <option value="50" selected>50 per page</option>
+                <option value="100">100 per page</option>
+                <option value="500">500 per page</option>
               </select>
             </div>
           </div>
@@ -154,6 +160,6 @@
 
   <div id="toast" class="toast hidden"></div>
 
-  <script src="/app.js"></script>
+  <script type="module" src="/js/main.js"></script>
 </body>
 </html>

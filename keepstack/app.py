@@ -31,6 +31,17 @@ WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 app = FastAPI(title="Keepstack DAM", version="0.1.0")
 
 
+@app.middleware("http")
+async def revalidate_web_client(request: Request, call_next):
+    """Make browsers revalidate the web client (index.html, styles.css, js/)
+    on every load. Without a Cache-Control header they may reuse a stale
+    script after an update, pairing new HTML with old code."""
+    response = await call_next(request)
+    if not request.url.path.startswith(("/api/", "/iiif/", "/oai", "/s/")):
+        response.headers.setdefault("Cache-Control", "no-cache")
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Bootstrap
 # ---------------------------------------------------------------------------
@@ -189,7 +200,7 @@ async def upload_assets(
     request: Request,
     files: list[UploadFile] = File(...),
     run_ai: bool = Form(True),
-    user: dict = Depends(require_role("contributor")),
+    user: dict = Depends(require_role("uploader")),
 ):
     results = []
     for f in files:
@@ -214,7 +225,7 @@ def list_assets(
     status: str = "active",
     sort: str = "newest",
     mode: str = "keyword",
-    limit: int = Query(60, le=200),
+    limit: int = Query(60, le=500),
     offset: int = 0,
     user: dict = Depends(require_user),
 ):
@@ -739,5 +750,18 @@ def healthz():
 # ---------------------------------------------------------------------------
 # Static SPA (registered last so API routes win)
 # ---------------------------------------------------------------------------
+SPA_VIEWS = ("library", "collections", "dashboard", "users", "audit")
+
+
+def spa_view():
+    """Each client view has its own URL; all of them load the same page."""
+    return FileResponse(WEB_DIR / "index.html")
+
+
+# Explicit paths, not "/{view}", so static files like /styles.css still resolve.
+for _view in SPA_VIEWS:
+    app.add_api_route(f"/{_view}", spa_view, methods=["GET"], include_in_schema=False)
+
+
 if WEB_DIR.exists():
     app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="web")

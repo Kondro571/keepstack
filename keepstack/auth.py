@@ -19,8 +19,19 @@ from .config import config
 from .db import get_conn
 
 # Role hierarchy: each role implies every capability of the ones after it.
-ROLES = ["admin", "editor", "contributor", "viewer"]
+ROLES = ["admin", "editor", "contributor", "uploader", "viewer"]
 _RANK = {r: i for i, r in enumerate(ROLES)}
+
+# Labels and descriptions shown in the user management UI.
+ROLE_INFO = {
+    "admin": ("Administrator", "Full access, including users, audit log and settings."),
+    "editor": ("Editor", "Browse, add, edit and delete assets."),
+    "contributor": ("Contributor", "Browse, add and edit assets, tags and collections. Cannot delete."),
+    "uploader": ("Uploader", "Browse, search, download and add new files. Cannot edit or delete."),
+    "viewer": ("Viewer", "Browse, search, view and download."),
+}
+# Roles offered when creating a user; the others stay valid for existing accounts.
+OFFERED_ROLES = ("admin", "uploader", "viewer")
 
 
 def role_at_least(role: str, minimum: str) -> bool:

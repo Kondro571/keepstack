@@ -100,6 +100,7 @@ button, input, select { font-family: inherit; font-size: inherit; }
 .nav-item {
   text-align: left; background: transparent; border: none; color: var(--muted);
   padding: var(--s2); border-radius: var(--radius-sm); cursor: pointer; transition: background .15s, color .15s;
+  display: block; text-decoration: none;
 }
 .nav-item:hover { background: var(--base-2); color: var(--text); }
 .nav-item.active { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
@@ -139,7 +140,7 @@ button, input, select { font-family: inherit; font-size: inherit; }
 /* ---------- grid ---------- */
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s3); }
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--s1); margin-top: var(--s4); }
-.pager .btn { min-width: 40px; padding: var(--s1) var(--s2); }
+.pager .btn { min-width: 40px; padding: var(--s1) var(--s2); text-align: center; text-decoration: none; }
 .pager .btn.current { background: var(--accent-dim); color: var(--accent); font-weight: 600; }
 .pager .gap { color: var(--muted); padding: 0 var(--s1); }
 .pager .range { margin-left: var(--s3); font-size: 13px; }

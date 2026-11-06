@@ -41,7 +41,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full picture. The short version:
 | Dublin Core, OAI-PMH, or IIIF | `keepstack/standards.py` |
 | Auth, roles, or tokens | `keepstack/auth.py` |
 | API routes | `keepstack/app.py` |
-| The web UI | `web/index.html`, `web/styles.css`, `web/app.js` |
+| The web UI | `web/index.html`, `web/styles.css`, `web/js/` (ES modules; `main.js` is the entry and lists the rest) |
 | The database schema | `keepstack/db.py` |
 
 ## Adding a feature, the short path

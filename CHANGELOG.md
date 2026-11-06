@@ -45,11 +45,20 @@ semantic versioning.
 - Tidied the chrome: background scrolling now locks while the drawer or upload
   modal is open (one scrollbar instead of two), scrollbars are slim and themed,
   and the dropdown controls got a custom chevron with roomier padding.
-- The library is paged (60 per page, numbered pages) instead of showing only
-  the first 120 assets, and deep pages stay fast via id-only paging and
-  `(status, ...)` indexes. Sidebar facet counts are cached and refreshed when
-  the catalog changes. Media type and Top tags groups can be collapsed, and
-  that choice is stored per user (`/api/auth/me/preferences`).
+- The library is paged (numbered pages, 10/50/100/500 per page) instead of
+  showing only the first 120 assets, and deep pages stay fast via id-only
+  paging and `(status, ...)` indexes. Sidebar facet counts are cached and
+  refreshed when the catalog changes. Media type and Top tags groups can be
+  collapsed; that choice and the page size are stored per user
+  (`/api/auth/me/preferences`).
+- Every view has its own URL (`/library`, `/collections`, `/dashboard`,
+  `/users`, `/audit`), and the library's search, filters, page and page size
+  live in the query string, so back/forward, refresh and shared links work.
+- Split the single `web/app.js` into native ES modules under `web/js/`
+  (`main.js` entry, plus router, library, asset drawer, upload, collections
+  and admin), still with no build step. The web client is served with
+  `Cache-Control: no-cache` so browsers pick up updates instead of reusing a
+  stale script.
 
 ### Fixed
 
